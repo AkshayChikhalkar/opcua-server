@@ -2,7 +2,16 @@
 
 Python client for the Phoenix Contact OPC UA server on the Prüfwand controller.
 
-The controller is an OPC UA server at `opc.tcp://192.168.1.10:4840` (`Safety-Control-ECU`). It requires a signed session. Username, password, IP, and the PLC node ids are stored in `ecu.local.json`. That file is gitignored.
+The controller is an OPC UA server at `opc.tcp://192.168.1.10:4840` (`Safety-Control-ECU`). It requires a signed session. Username, password, and IP are stored in `ecu.local.json`. That file is gitignored.
+
+`subscribe` chooses the variables. A rule can set `namespace`, `identifier` (a name prefix), `contains`, or `node_id`. The saved rules keep the server state, the device name, and every PLC variable in namespace 6.
+
+```json
+"subscribe": [
+  { "node_id": "i=2259" },
+  { "namespace": 6, "contains": "_ERR" }
+]
+```
 
 ## Setup
 
@@ -12,11 +21,7 @@ python -m venv .venv
 pip install -r requirements.txt
 ```
 
-This PC is on `192.168.140.0/24`. The controller is on `192.168.1.0/24`. A static route through the dual-homed PC is required:
-
-```powershell
-route add 192.168.1.0 mask 255.255.255.0 192.168.140.21
-```
+The controller is on `192.168.1.0/24`. This PC reaches it through the Tailscale subnet route advertised by `DESKTOP-R57P7PK`.
 
 ## Connect
 

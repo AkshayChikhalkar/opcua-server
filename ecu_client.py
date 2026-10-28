@@ -221,38 +221,120 @@ async def ensure_client_certificate() -> tuple[Path, Path, str]:
     return cert, key, app_uri
 
 
-async def simple_variables(nodes: list[Node]) -> list[Node]:
-    kept: list[Node] = []
-    for node in nodes:
+BROWSE_CONCURRENCY = 24
+READ_CHUNK = 200
+# Namespace 0 identifiers that map straight to a scalar VariantType.
+BUILTIN_DATATYPE_IDS = {
+    1: ua.VariantType.Boolean,
+    2: ua.VariantType.SByte,
+    3: ua.VariantType.Byte,
+    4: ua.VariantType.Int16,
+    5: ua.VariantType.UInt16,
+    6: ua.VariantType.Int32,
+    7: ua.VariantType.UInt32,
+    8: ua.VariantType.Int64,
+    9: ua.VariantType.UInt64,
+    10: ua.VariantType.Float,
+    11: ua.VariantType.Double,
+    12: ua.VariantType.String,
+    13: ua.VariantType.DateTime,
+    14: ua.VariantType.Guid,
+    15: ua.VariantType.ByteString,
+    19: ua.VariantType.StatusCode,
+    21: ua.VariantType.LocalizedText,
+    29: ua.VariantType.Int32,  # Enumeration
+}
+async def _browse_children(node: Node, sem: asyncio.Semaphore) -> list:
+    async with sem:
         try:
-            variant_type = await node.read_data_type_as_variant_type()
+            return await node.get_children_descriptions()
         except Exception:
-            continue
-        if variant_type in SIMPLE_VARIANT_TYPES:
-            kept.append(node)
-    return kept
+            return []
 
 
 async def collect_variables(node: Node, depth: int, found: list[Node]) -> None:
-    if depth < 0 or len(found) >= MAX_VARIABLES_PER_SERVER:
-        return
+    """Breadth-first browse. One request per parent, many parents at the same time."""
+    sem = asyncio.Semaphore(BROWSE_CONCURRENCY)
+    current = [node]
+    for _ in range(depth + 1):
+        if not current or len(found) >= MAX_VARIABLES_PER_SERVER:
+            return
+        groups = await asyncio.gather(*(_browse_children(parent, sem) for parent in current))
+        current = []
+        for refs in groups:
+            for ref in refs:
+                if len(found) >= MAX_VARIABLES_PER_SERVER:
+                    return
+                child = Node(node.session, ref.NodeId)
+                if ref.NodeClass == ua.NodeClass.Variable:
+                    found.append(child)
+                else:
+                    current.append(child)
 
-    try:
-        node_class = await node.read_node_class()
-    except Exception:
-        return
 
-    if node_class == ua.NodeClass.Variable:
-        found.append(node)
-        return
+async def _read_data_types(session, nodes: list[Node]) -> list:
+    values = []
+    for start in range(0, len(nodes), READ_CHUNK):
+        chunk = nodes[start : start + READ_CHUNK]
+        params = ua.ReadParameters()
+        for item in chunk:
+            rv = ua.ReadValueId()
+            rv.NodeId = item.nodeid
+            rv.AttributeId = ua.AttributeIds.DataType
+            params.NodesToRead.append(rv)
+        values.extend(await session.read(params))
+    return values
 
-    try:
-        children = await node.get_children()
-    except Exception:
-        return
 
-    for child in children:
-        await collect_variables(child, depth - 1, found)
+async def simple_variables(nodes: list[Node]) -> list[Node]:
+    if not nodes:
+        return []
+
+    from asyncua.common.ua_utils import data_type_to_variant_type
+
+    session = nodes[0].session
+    data_types = await _read_data_types(session, nodes)
+    kept: list[Node] = []
+    custom: dict[str, tuple[ua.NodeId, list[Node]]] = {}
+
+    for item, result in zip(nodes, data_types):
+        if result.Value is None or result.Value.Value is None:
+            continue
+        dtype = result.Value.Value
+        identifier = dtype.Identifier
+        if dtype.NamespaceIndex == 0 and isinstance(identifier, int):
+            variant_type = BUILTIN_DATATYPE_IDS.get(identifier)
+            if variant_type in SIMPLE_VARIANT_TYPES:
+                kept.append(item)
+                continue
+            # Structure, abstract, and non-scalar builtins. Subtypes such as
+            # Duration (i=290) fall through and are resolved once per type.
+            if identifier in {16, 17, 18, 20, 22, 23, 24, 25}:
+                continue
+        key = dtype.to_string()
+        bucket = custom.get(key)
+        if bucket is None:
+            custom[key] = (dtype, [item])
+        else:
+            bucket[1].append(item)
+
+    if not custom:
+        return kept
+
+    sem = asyncio.Semaphore(BROWSE_CONCURRENCY)
+
+    async def resolve(dtype: ua.NodeId):
+        async with sem:
+            try:
+                return await data_type_to_variant_type(Node(session, dtype))
+            except Exception:
+                return None
+
+    resolved = await asyncio.gather(*(resolve(dtype) for dtype, _owners in custom.values()))
+    for (_dtype, owners), variant_type in zip(custom.values(), resolved):
+        if variant_type in SIMPLE_VARIANT_TYPES:
+            kept.extend(owners)
+    return kept
 
 
 async def probe_opc_host(ip: str, port: int, sem: asyncio.Semaphore) -> set[str]:
@@ -367,6 +449,8 @@ async def connect_server(
     username: str | None = None,
     password: str | None = None,
     record_file=None,
+    node_ids: list[str] | None = None,
+    subscribe_rules: list[dict] | None = None,
 ) -> ServerConnection | None:
     label = url_label(url)
     client = Client(url, timeout=CONNECT_TIMEOUT)
@@ -432,18 +516,33 @@ async def connect_server(
                 print(f"[WARN] Could not connect to {url}: {last_error}")
                 return None
 
-    found: list[Node] = []
-    await collect_variables(client.nodes.objects, BROWSE_DEPTH, found)
-    variables = await simple_variables(found)
+    if node_ids:
+        print(f"[INFO] {label}: listening to {len(node_ids)} saved variable(s)")
+        selected = [Node(client.nodes.objects.session, node_id) for node_id in node_ids]
+        variables = await simple_variables(selected)
+        skipped = len(selected) - len(variables)
+        if skipped:
+            print(f"[INFO] {label}: skipped {skipped} saved variable(s) that are not simple values")
+    else:
+        print(f"[INFO] {label}: browsing variables...")
+        found: list[Node] = []
+        await collect_variables(client.nodes.objects, BROWSE_DEPTH, found)
+        if subscribe_rules:
+            found = [node for node in found if node_matches(node, subscribe_rules)]
+            already = {node.nodeid.to_string() for node in found}
+            for node_id in explicit_node_ids(subscribe_rules):
+                if node_id not in already:
+                    found.append(Node(client.nodes.objects.session, node_id))
+            print(f"[INFO] {label}: {len(found)} variable(s) match the subscribe rules")
+        variables = await simple_variables(found)
+        skipped = len(found) - len(variables)
+        if skipped:
+            print(f"[INFO] {label}: skipped {skipped} structure variable(s)")
 
     if not variables:
-        print(f"[WARN] {label}: connected but no simple variables under Objects")
+        print(f"[WARN] {label}: connected but no simple variables to subscribe")
         await client.disconnect()
         return None
-
-    skipped = len(found) - len(variables)
-    if skipped:
-        print(f"[INFO] {label}: skipped {skipped} structure variable(s)")
 
     handler = DataHandler(label, record_file)
     # This server revises LifetimeCount to 3x MaxKeepAliveCount (16200).
@@ -482,6 +581,8 @@ async def run(
     password: str | None,
     minutes: float | None = None,
     output: str | None = None,
+    node_ids: list[str] | None = None,
+    subscribe_rules: list[dict] | None = None,
 ) -> None:
     if url:
         urls = [await prefer_reachable_url(normalize_endpoint_url(url))]
@@ -515,7 +616,14 @@ async def run(
     connections: list[ServerConnection] = []
     try:
         for found in urls:
-            conn = await connect_server(found, username, password, record_file)
+            conn = await connect_server(
+                found,
+                username,
+                password,
+                record_file,
+                node_ids if url else None,
+                subscribe_rules if url else None,
+            )
             if conn is not None:
                 connections.append(conn)
 
@@ -577,6 +685,72 @@ def load_config() -> dict:
     return data if isinstance(data, dict) else {}
 
 
+def same_saved_server(config: dict, url: str | None) -> bool:
+    if not url:
+        return False
+    saved = config.get("url")
+    if not saved:
+        return True
+    if normalize_endpoint_url(url) == normalize_endpoint_url(str(saved)):
+        return True
+    saved_host = urlparse(normalize_endpoint_url(str(saved))).hostname
+    this_host = urlparse(normalize_endpoint_url(url)).hostname
+    return bool(saved_host and this_host and saved_host == this_host)
+
+
+def node_matches(node: Node, rules: list[dict]) -> bool:
+    """A rule matches when every field it sets matches. identifier is a prefix."""
+    identifier = str(node.nodeid.Identifier)
+    namespace = node.nodeid.NamespaceIndex
+    for rule in rules:
+        if not isinstance(rule, dict):
+            continue
+        if not any(key in rule for key in ("namespace", "identifier", "contains", "node_id")):
+            continue
+        if "namespace" in rule and namespace != rule["namespace"]:
+            continue
+        if "node_id" in rule and node.nodeid.to_string() != rule["node_id"]:
+            continue
+        prefix = rule.get("identifier")
+        if prefix is not None and not identifier.startswith(str(prefix)):
+            continue
+        needle = rule.get("contains")
+        if needle is not None and str(needle) not in identifier:
+            continue
+        return True
+    return False
+
+
+def explicit_node_ids(rules: list[dict] | None) -> list[str]:
+    if not rules:
+        return []
+    return [
+        rule["node_id"]
+        for rule in rules
+        if isinstance(rule, dict) and rule.get("node_id")
+    ]
+
+
+def subscription_from_config(
+    config: dict, url: str | None
+) -> tuple[list[str] | None, list[dict] | None]:
+    """Exact node ids, or namespace/identifier rules, for the saved controller."""
+    if not same_saved_server(config, url):
+        return None, None
+    rules = config.get("subscribe")
+    if isinstance(rules, dict):
+        rules = [rules]
+    if isinstance(rules, list) and rules:
+        return None, [rule for rule in rules if isinstance(rule, dict)]
+    entries = config.get("nodes") or []
+    node_ids = [
+        entry["node_id"]
+        for entry in entries
+        if isinstance(entry, dict) and entry.get("node_id")
+    ]
+    return (node_ids or None), None
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Discover OPC UA servers and subscribe to all variables."
@@ -634,6 +808,7 @@ def main() -> None:
         print("[ERROR] This server requires a username and password.")
         print(f"        Put them in {CONFIG_PATH.name}, or pass --user and --password.")
         sys.exit(1)
+    node_ids, subscribe_rules = (None, None) if args.scan else subscription_from_config(config, args.url)
     try:
         asyncio.run(
             run(
@@ -643,6 +818,8 @@ def main() -> None:
                 args.password,
                 args.minutes,
                 args.output,
+                node_ids,
+                subscribe_rules,
             )
         )
     except KeyboardInterrupt:
