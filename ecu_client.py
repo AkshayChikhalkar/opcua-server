@@ -22,6 +22,7 @@ import json
 import os
 import socket
 import sys
+import threading
 import time
 from datetime import datetime, timezone
 from collections.abc import Iterable
@@ -29,6 +30,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import urlparse
 
+import psycopg
 from asyncua import Client, ua
 from asyncua.common.node import Node
 from asyncua.crypto.cert_gen import setup_self_signed_certificate
@@ -100,35 +102,159 @@ SIMPLE_VARIANT_TYPES = {
 
 
 class DataHandler:
-    def __init__(self, server_label: str, record_file=None) -> None:
+    def __init__(self, server_label: str, record_file=None, store: "SampleStore | None" = None) -> None:
         self.server_label = server_label
         self.record_file = record_file
+        self.store = store
         self.count = 0
 
     def datachange_notification(self, node: Node, val, data) -> None:
-        if self.record_file is None:
+        if self.record_file is None and self.store is None:
             print(f"[{self.server_label}] {node.nodeid.Identifier} = {val!r}")
         source_t = None
         status = None
         try:
             value = data.monitored_item.Value
             if value.SourceTimestamp is not None:
-                source_t = value.SourceTimestamp.isoformat()
+                source_t = value.SourceTimestamp
             if value.StatusCode is not None:
                 status = value.StatusCode.name
         except Exception:
             pass
+        wrote = False
+        if self.store is not None:
+            self.store.write(node.nodeid.to_string(), source_t, val, status)
+            wrote = True
         if self.record_file is not None:
             row = {
                 "t": datetime.now(timezone.utc).isoformat(),
-                "source_t": source_t,
+                "source_t": source_t.isoformat() if source_t is not None else None,
                 "node_id": node.nodeid.to_string(),
                 "name": str(node.nodeid.Identifier),
                 "value": val,
                 "status": status,
             }
             self.record_file.write(json.dumps(row, default=str) + "\n")
+            wrote = True
+        if wrote:
             self.count += 1
+
+
+def split_sample_value(value) -> tuple[float | None, str | None]:
+    if value is None:
+        return None, None
+    if isinstance(value, bool):
+        return float(value), None
+    if isinstance(value, (int, float)):
+        return float(value), None
+    text = getattr(value, "Text", None)
+    if isinstance(text, str):
+        return None, text
+    if isinstance(value, str):
+        return None, value
+    return None, str(value)
+
+
+class SampleStore:
+    """Writes OPC UA samples to TimescaleDB on this machine."""
+
+    def __init__(self, connection: psycopg.Connection) -> None:
+        self.connection = connection
+        self.signal_ids: dict[str, int] = {}
+        self.lock = threading.Lock()
+        self.failed = False
+
+    @classmethod
+    def connect(cls) -> "SampleStore":
+        load_env_file()
+        connection = psycopg.connect(
+            host=os.environ.get("POSTGRES_HOST", "127.0.0.1"),
+            port=int(os.environ.get("POSTGRES_PORT", "5432")),
+            user=os.environ.get("POSTGRES_USER", "recorder"),
+            password=os.environ["POSTGRES_PASSWORD"],
+            dbname=os.environ.get("POSTGRES_DB", "recorder"),
+            autocommit=True,
+        )
+        return cls(connection)
+
+    def close(self) -> None:
+        self.connection.close()
+
+    def register(self, endpoint: str, name: str, variables: list[Node]) -> None:
+        with self.connection.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO controllers (name, endpoint)
+                VALUES (%s, %s)
+                ON CONFLICT (endpoint) DO UPDATE SET name = EXCLUDED.name
+                RETURNING id
+                """,
+                (name, endpoint),
+            )
+            controller_id = cur.fetchone()[0]
+            for node in variables:
+                identifier = str(node.nodeid.Identifier)
+                cur.execute(
+                    """
+                    INSERT INTO signals (controller_id, namespace, identifier, name)
+                    VALUES (%s, %s, %s, %s)
+                    ON CONFLICT (controller_id, namespace, identifier)
+                    DO UPDATE SET name = EXCLUDED.name
+                    RETURNING id
+                    """,
+                    (controller_id, node.nodeid.NamespaceIndex, identifier, identifier),
+                )
+                self.signal_ids[node.nodeid.to_string()] = cur.fetchone()[0]
+
+    def write(self, node_id: str, when, value, status: str | None) -> None:
+        signal_id = self.signal_ids.get(node_id)
+        if signal_id is None or self.failed:
+            return
+        if when is None:
+            when = datetime.now(timezone.utc)
+        value_num, value_text = split_sample_value(value)
+        try:
+            with self.lock:
+                with self.connection.cursor() as cur:
+                    cur.execute(
+                        """
+                        INSERT INTO samples (time, signal_id, value_num, value_text, status)
+                        VALUES (%s, %s, %s, %s, %s)
+                        """,
+                        (when, signal_id, value_num, value_text, status),
+                    )
+                    cur.execute(
+                        """
+                        INSERT INTO latest (signal_id, time, value_num, value_text, status)
+                        VALUES (%s, %s, %s, %s, %s)
+                        ON CONFLICT (signal_id) DO UPDATE SET
+                            time = EXCLUDED.time,
+                            value_num = EXCLUDED.value_num,
+                            value_text = EXCLUDED.value_text,
+                            status = EXCLUDED.status
+                        """,
+                        (signal_id, when, value_num, value_text, status),
+                    )
+        except Exception as exc:
+            self.failed = True
+            print(f"[WARN] Stopped database writes: {type(exc).__name__}: {exc}")
+
+
+def load_env_file() -> None:
+    path = Path(__file__).resolve().parent / ".env"
+    if not path.is_file():
+        return
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
+
+
+def postgres_enabled() -> bool:
+    load_env_file()
+    return bool(os.environ.get("POSTGRES_PASSWORD"))
 
 
 def local_ipv4_networks() -> set[ipaddress.IPv4Network]:
@@ -451,6 +577,7 @@ async def connect_server(
     record_file=None,
     node_ids: list[str] | None = None,
     subscribe_rules: list[dict] | None = None,
+    store: SampleStore | None = None,
 ) -> ServerConnection | None:
     label = url_label(url)
     client = Client(url, timeout=CONNECT_TIMEOUT)
@@ -544,7 +671,16 @@ async def connect_server(
         await client.disconnect()
         return None
 
-    handler = DataHandler(label, record_file)
+    if store is not None:
+        try:
+            store.register(url, label, variables)
+        except Exception as exc:
+            print(f"[ERROR] Could not register signals in PostgreSQL: {type(exc).__name__}: {exc}")
+            print("        Apply deploy/postgres/init/02-schema.sql if the tables are missing.")
+            await client.disconnect()
+            raise
+
+    handler = DataHandler(label, record_file, store)
     # This server revises LifetimeCount to 3x MaxKeepAliveCount (16200).
     # Request that up front so asyncua does not warn and modify the subscription.
     params = ua.CreateSubscriptionParameters()
@@ -583,6 +719,7 @@ async def run(
     output: str | None = None,
     node_ids: list[str] | None = None,
     subscribe_rules: list[dict] | None = None,
+    store: SampleStore | None = None,
 ) -> None:
     if url:
         urls = [await prefer_reachable_url(normalize_endpoint_url(url))]
@@ -613,6 +750,17 @@ async def run(
         )
         print(f"[INFO] Recording {minutes:g} min to {record_path}")
 
+    if store is None and postgres_enabled():
+        host = os.environ.get("POSTGRES_HOST", "127.0.0.1")
+        port = os.environ.get("POSTGRES_PORT", "5432")
+        dbname = os.environ.get("POSTGRES_DB", "recorder")
+        try:
+            store = SampleStore.connect()
+        except Exception as exc:
+            print(f"[ERROR] Could not open PostgreSQL at {host}:{port}/{dbname}: {type(exc).__name__}: {exc}")
+            sys.exit(1)
+        print(f"[INFO] Writing samples to PostgreSQL at {host}:{port}/{dbname}")
+
     connections: list[ServerConnection] = []
     try:
         for found in urls:
@@ -623,6 +771,7 @@ async def run(
                 record_file,
                 node_ids if url else None,
                 subscribe_rules if url else None,
+                store,
             )
             if conn is not None:
                 connections.append(conn)
@@ -633,8 +782,10 @@ async def run(
 
         total_vars = sum(len(c.variables) for c in connections)
         print(f"\n[INFO] Listening on {len(connections)} server(s), {total_vars} variable(s) total.")
-        if minutes is None:
+        if minutes is None and store is None:
             print("[INFO] Press Ctrl+C to stop.\n")
+        elif minutes is None:
+            print("[INFO] Writing samples to PostgreSQL. Press Ctrl+C to stop.\n")
         else:
             print(f"[INFO] Recording for {minutes:g} min. Press Ctrl+C to stop early.\n")
 
@@ -645,7 +796,7 @@ async def run(
                 now = time.monotonic()
                 if minutes is not None and now - started >= minutes * 60:
                     break
-                if minutes is not None and now >= next_report:
+                if now >= next_report and (minutes is not None or store is not None):
                     samples = sum(conn.handler.count for conn in connections)
                     print(f"[INFO] {int(now - started)}s elapsed, {samples} samples")
                     next_report += 30
@@ -658,6 +809,8 @@ async def run(
                     pass
             print("[INFO] Disconnected from all servers.")
     finally:
+        if store is not None:
+            store.close()
         if record_file is not None and record_path is not None:
             samples = sum(conn.handler.count for conn in connections)
             record_file.write(
