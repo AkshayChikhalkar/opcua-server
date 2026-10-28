@@ -161,6 +161,7 @@ class SampleStore:
     def __init__(self, connection: psycopg.Connection) -> None:
         self.connection = connection
         self.signal_ids: dict[str, int] = {}
+        self.controller_id: int | None = None
         self.lock = threading.Lock()
         self.failed = False
 
@@ -192,6 +193,7 @@ class SampleStore:
                 (name, endpoint),
             )
             controller_id = cur.fetchone()[0]
+            self.controller_id = controller_id
             for node in variables:
                 identifier = str(node.nodeid.Identifier)
                 cur.execute(
@@ -218,10 +220,10 @@ class SampleStore:
                 with self.connection.cursor() as cur:
                     cur.execute(
                         """
-                        INSERT INTO samples (time, signal_id, value_num, value_text, status)
-                        VALUES (%s, %s, %s, %s, %s)
+                        INSERT INTO samples (time, received_at, signal_id, value_num, value_text, status)
+                        VALUES (%s, %s, %s, %s, %s, %s)
                         """,
-                        (when, signal_id, value_num, value_text, status),
+                        (when, datetime.now(timezone.utc), signal_id, value_num, value_text, status),
                     )
                     cur.execute(
                         """
@@ -238,6 +240,43 @@ class SampleStore:
         except Exception as exc:
             self.failed = True
             print(f"[WARN] Stopped database writes: {type(exc).__name__}: {exc}")
+
+    def touch(self) -> None:
+        """Tell the database this recorder is still connected."""
+        if self.controller_id is None or self.failed:
+            return
+        try:
+            with self.lock:
+                with self.connection.cursor() as cur:
+                    cur.execute(
+                        """
+                        INSERT INTO recorder_status (controller_id, last_seen, listening)
+                        VALUES (%s, now(), true)
+                        ON CONFLICT (controller_id) DO UPDATE
+                        SET last_seen = now(), listening = true
+                        """,
+                        (self.controller_id,),
+                    )
+        except Exception as exc:
+            self.failed = True
+            print(f"[WARN] Stopped database writes: {type(exc).__name__}: {exc}")
+
+    def mark_offline(self) -> None:
+        if self.controller_id is None:
+            return
+        try:
+            with self.lock:
+                with self.connection.cursor() as cur:
+                    cur.execute(
+                        """
+                        UPDATE recorder_status
+                        SET listening = false, last_seen = now()
+                        WHERE controller_id = %s
+                        """,
+                        (self.controller_id,),
+                    )
+        except Exception:
+            pass
 
 
 def load_env_file() -> None:
@@ -791,11 +830,15 @@ async def run(
 
         started = time.monotonic()
         next_report = started + 30
+        next_touch = started
         try:
             while True:
                 now = time.monotonic()
                 if minutes is not None and now - started >= minutes * 60:
                     break
+                if store is not None and now >= next_touch:
+                    store.touch()
+                    next_touch = now + 10
                 if now >= next_report and (minutes is not None or store is not None):
                     samples = sum(conn.handler.count for conn in connections)
                     print(f"[INFO] {int(now - started)}s elapsed, {samples} samples")
@@ -810,6 +853,7 @@ async def run(
             print("[INFO] Disconnected from all servers.")
     finally:
         if store is not None:
+            store.mark_offline()
             store.close()
         if record_file is not None and record_path is not None:
             samples = sum(conn.handler.count for conn in connections)

@@ -17,6 +17,7 @@ CREATE TABLE IF NOT EXISTS signals (
 
 CREATE TABLE IF NOT EXISTS samples (
     time timestamptz NOT NULL,
+    received_at timestamptz NOT NULL DEFAULT now(),
     signal_id bigint NOT NULL,
     value_num double precision,
     value_text text,
@@ -26,6 +27,12 @@ CREATE TABLE IF NOT EXISTS samples (
 SELECT create_hypertable('samples', 'time', if_not_exists => TRUE);
 
 CREATE INDEX IF NOT EXISTS samples_signal_time_idx ON samples (signal_id, time DESC);
+
+CREATE TABLE IF NOT EXISTS recorder_status (
+    controller_id bigint PRIMARY KEY REFERENCES controllers (id),
+    last_seen timestamptz NOT NULL,
+    listening boolean NOT NULL
+);
 
 CREATE TABLE IF NOT EXISTS latest (
     signal_id bigint PRIMARY KEY REFERENCES signals (id),
