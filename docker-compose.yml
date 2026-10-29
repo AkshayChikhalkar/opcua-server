@@ -38,6 +38,7 @@ services:
       - ./deploy/grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
       - ./deploy/grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
       - ./deploy/grafana/dashboards/lynx:/var/lib/grafana/dashboards/lynx:ro
+      - ./deploy/grafana/dashboards/br:/var/lib/grafana/dashboards/br:ro
 
 volumes:
   timescale_data:

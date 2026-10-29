@@ -1,0 +1,55 @@
+{
+  "uid": "br-x90",
+  "title": "B&R X90",
+  "description": "Logbooks read from the B&R System Diagnostics Manager.",
+  "tags": ["br", "x90"],
+  "timezone": "browser",
+  "refresh": "15s",
+  "schemaVersion": 39,
+  "editable": true,
+  "time": {"from": "now-24h", "to": "now"},
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Recorder",
+      "gridPos": {"x": 0, "y": 0, "w": 4, "h": 4},
+      "datasource": {"type": "grafana-postgresql-datasource", "uid": "P40AE60E18F02DE32"},
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            {"type": "value", "options": {"0": {"text": "Offline", "color": "red"}, "1": {"text": "Live", "color": "green"}}}
+          ],
+          "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "green", "value": 1}]}
+        }
+      },
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "background", "graphMode": "none", "textMode": "value"},
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {"type": "grafana-postgresql-datasource", "uid": "P40AE60E18F02DE32"},
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT CASE WHEN EXISTS (SELECT 1 FROM recorder_status rs JOIN controllers c ON c.id = rs.controller_id WHERE c.endpoint LIKE 'sdm://%' AND rs.listening AND rs.last_seen > now() - interval '45 seconds') THEN 1 ELSE 0 END AS \"Recorder\""
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "table",
+      "title": "Logbook",
+      "gridPos": {"x": 0, "y": 4, "w": 24, "h": 16},
+      "datasource": {"type": "grafana-postgresql-datasource", "uid": "P40AE60E18F02DE32"},
+      "options": {"showHeader": true, "cellHeight": "sm", "footer": {"show": false, "reducer": ["sum"], "countRows": false}},
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {"type": "grafana-postgresql-datasource", "uid": "P40AE60E18F02DE32"},
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT sa.received_at AS \"time\", sa.time AS \"PLC time\", s.name AS \"Book\", sa.value_num AS \"Level\", sa.status AS \"Code\", sa.value_text AS \"Message\" FROM samples sa JOIN signals s ON s.id = sa.signal_id JOIN controllers c ON c.id = s.controller_id WHERE c.endpoint LIKE 'sdm://%' AND $__timeFilter(sa.received_at) ORDER BY sa.received_at DESC"
+        }
+      ]
+    }
+  ]
+}
