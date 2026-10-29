@@ -42,7 +42,7 @@ CONTROL_ITEM = re.compile(r"^/api/devices/([a-f0-9]{32})/controls/([a-f0-9]{32})
 SEED = [
     {
         "id": "a1b2c3d4e5f64789a0b1c2d3e4f50617",
-        "name": "Shelly Pro 1",
+        "name": "Lynx Smart BMS HQ252",
         "host": "192.168.140.36",
         "kind": "shelly-gen2",
         "switch_id": 0,
