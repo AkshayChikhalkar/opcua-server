@@ -4,6 +4,8 @@ __pycache__/
 certs/
 .env
 ecu.local.json
+lynx.local.json
 recordings/
+shelly/devices.json
 *.pem
 *.der

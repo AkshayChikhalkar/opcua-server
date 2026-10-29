@@ -1,0 +1,795 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Controls</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #10140f;
+      --card: #1a2218;
+      --line: #2d3a28;
+      --text: #e8f0e4;
+      --muted: #9aab94;
+      --on: #7dce6a;
+      --on-deep: #1d3a18;
+      --off: #d0d4cc;
+      --off-deep: #2a2e28;
+      --danger: #e07a6a;
+      --field: #121810;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background:
+        radial-gradient(circle at top, #243222 0%, transparent 38%),
+        var(--bg);
+      color: var(--text);
+      font-family: "Segoe UI", sans-serif;
+    }
+
+    .page {
+      width: min(1080px, calc(100% - 32px));
+      margin: 0 auto;
+      padding: 36px 0 64px;
+    }
+
+    p { margin: 0; }
+
+    .eyebrow {
+      color: var(--muted);
+      font-size: 12px;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+    }
+
+    h1 {
+      margin: 8px 0 0;
+      font-size: 40px;
+      font-weight: 650;
+    }
+
+    h2 {
+      margin: 4px 0 0;
+      font-size: 26px;
+      font-weight: 650;
+    }
+
+    .intro {
+      margin-top: 8px;
+      color: var(--muted);
+      max-width: 640px;
+    }
+
+    .card, dialog {
+      border: 1px solid var(--line);
+      border-radius: 20px;
+      background: var(--card);
+      box-shadow: 0 18px 40px rgba(0, 0, 0, 0.22);
+    }
+
+    .masthead {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+      gap: 20px;
+    }
+
+    #open-add {
+      flex: none;
+      height: 48px;
+      padding: 0 18px;
+    }
+
+    dialog {
+      width: min(560px, calc(100vw - 32px));
+      padding: 22px;
+      color: var(--text);
+    }
+
+    dialog::backdrop {
+      background: rgba(8, 10, 7, 0.72);
+    }
+
+    .dialog-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+
+    .dialog-top h2 { margin: 0; }
+
+    .close {
+      background: transparent;
+      color: var(--muted);
+      border: 1px solid var(--line);
+      padding: 8px 12px;
+      font-size: 14px;
+    }
+
+    form, .fields {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+      align-items: end;
+    }
+
+    .span-2 { grid-column: 1 / -1; }
+
+    label {
+      display: grid;
+      gap: 6px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    input, select {
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: var(--field);
+      color: var(--text);
+      padding: 14px;
+      font: inherit;
+      font-size: 16px;
+    }
+
+    button {
+      border: 0;
+      border-radius: 12px;
+      padding: 14px 16px;
+      font: inherit;
+      font-size: 16px;
+      font-weight: 650;
+      cursor: pointer;
+    }
+
+    button:disabled { cursor: wait; opacity: 0.6; }
+
+    .add, .on-btn {
+      background: var(--on);
+      color: #10210d;
+    }
+
+    .add { height: 50px; }
+
+    .hint {
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .message {
+      min-height: 1.3em;
+      margin: 12px 0 0;
+      font-size: 14px;
+    }
+
+    .message.error, .card-error { color: var(--danger); }
+    .message.ok { color: var(--on); }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+      gap: 16px;
+      margin-top: 16px;
+    }
+
+    .card { padding: 22px; }
+    .card.controller { grid-column: 1 / -1; }
+
+    .card-top, .control-top {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: flex-start;
+    }
+
+    .address, .detail, .hint { color: var(--muted); }
+    .address { margin-top: 4px; font-size: 14px; }
+
+    .remove {
+      background: transparent;
+      color: var(--muted);
+      border: 1px solid var(--line);
+      padding: 8px 10px;
+      font-size: 13px;
+      font-weight: 650;
+    }
+
+    .remove.confirm { color: var(--danger); border-color: #8a463d; }
+
+    .status {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      margin: 20px 0;
+      padding: 16px 18px;
+      border-radius: 14px;
+      background: var(--off-deep);
+      border: 1px solid var(--line);
+    }
+
+    .status.on {
+      background: var(--on-deep);
+      border-color: #3d6a34;
+    }
+
+    .dot {
+      width: 16px;
+      height: 16px;
+      flex: none;
+      border-radius: 50%;
+      background: #6d756a;
+      box-shadow: 0 0 0 6px rgba(109, 117, 106, 0.15);
+    }
+
+    .status.on .dot {
+      background: var(--on);
+      box-shadow: 0 0 0 6px rgba(125, 206, 106, 0.16);
+    }
+
+    .label { font-size: 22px; font-weight: 650; }
+    .detail { font-size: 13px; margin-top: 2px; }
+
+    .actions {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+
+    .off-btn { background: var(--off); color: #1b1f19; }
+
+    .card-error {
+      min-height: 1.2em;
+      margin-top: 12px;
+      font-size: 14px;
+    }
+
+    .control {
+      padding-top: 16px;
+      margin-top: 16px;
+      border-top: 1px solid var(--line);
+    }
+
+    .control .status { margin: 12px 0; }
+
+    .control-form {
+      margin-top: 18px;
+      padding-top: 16px;
+      border-top: 1px solid var(--line);
+    }
+
+    .empty {
+      margin-top: 16px;
+      padding: 28px;
+      border: 1px dashed var(--line);
+      border-radius: 20px;
+      color: var(--muted);
+    }
+
+    .none {
+      margin-top: 14px;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    @media (max-width: 760px) {
+      h1 { font-size: 32px; }
+      form, .fields { grid-template-columns: 1fr; }
+      .span-2 { grid-column: auto; }
+      .add { width: 100%; }
+      .card.controller { grid-column: auto; }
+      .masthead { flex-direction: column; align-items: stretch; }
+      #open-add { width: 100%; }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <div class="masthead">
+      <div>
+        <p class="eyebrow">Local network</p>
+        <h1>Controls</h1>
+        <p class="intro">Devices on this network.</p>
+      </div>
+      <button id="open-add" class="add" type="button">Add device</button>
+    </div>
+
+    <dialog id="add-dialog">
+      <div class="dialog-top">
+        <h2>Add device</h2>
+        <button id="close-add" class="close" type="button">Close</button>
+      </div>
+      <form id="add-form">
+        <label class="span-2">
+          Type
+          <select name="type">
+            <option value="shelly">Shelly relay</option>
+            <option value="http">Other switch</option>
+            <option value="controller">Controller</option>
+          </select>
+        </label>
+        <p class="hint span-2" id="type-hint"></p>
+        <label data-types="shelly http">
+          Address
+          <input name="host" data-required="true" autocomplete="off" placeholder="192.168.140.36" spellcheck="false">
+        </label>
+        <label data-types="controller">
+          Endpoint
+          <input name="endpoint" data-required="true" autocomplete="off" placeholder="opc.tcp://192.168.1.10:4840" spellcheck="false">
+        </label>
+        <label data-types="shelly http controller">
+          Name
+          <input name="name" maxlength="60" autocomplete="off" placeholder="Optional">
+        </label>
+        <label data-types="http">
+          On path
+          <input name="on_path" data-required="true" autocomplete="off" placeholder="/switch/on" spellcheck="false">
+        </label>
+        <label data-types="http">
+          Off path
+          <input name="off_path" data-required="true" autocomplete="off" placeholder="/switch/off" spellcheck="false">
+        </label>
+        <label data-types="http">
+          Status path
+          <input name="status_path" data-required="true" autocomplete="off" placeholder="/status" spellcheck="false">
+        </label>
+        <label data-types="http">
+          Status field
+          <input name="status_key" autocomplete="off" placeholder="output" spellcheck="false">
+        </label>
+        <button class="add span-2" type="submit">Add device</button>
+      </form>
+      <p class="message" id="form-message"></p>
+    </dialog>
+
+    <div class="grid" id="grid"></div>
+    <p class="empty" id="empty" hidden>No devices yet.</p>
+  </div>
+
+  <script>
+    const dialog = document.querySelector("#add-dialog");
+    const form = document.querySelector("#add-form");
+    const typeSelect = form.querySelector("[name=type]");
+    const typeHint = document.querySelector("#type-hint");
+    const formMessage = document.querySelector("#form-message");
+    const grid = document.querySelector("#grid");
+    const empty = document.querySelector("#empty");
+    const cards = new Map();
+    let refreshing = false;
+    let listVersion = 0;
+
+    const hints = {
+      shelly: "The page finds the relay at that address and adds each output.",
+      http: "Use this for a switch with its own on, off, and status links.",
+      controller: "The page checks that the endpoint answers. Add each switch on the controller card."
+    };
+
+    function element(tag, className, text) {
+      const node = document.createElement(tag);
+      if (className) node.className = className;
+      if (text != null) node.textContent = text;
+      return node;
+    }
+
+    function setMessage(text, kind) {
+      formMessage.textContent = text || "";
+      formMessage.className = "message" + (kind ? " " + kind : "");
+    }
+
+    function syncForm() {
+      const type = typeSelect.value;
+      typeHint.textContent = hints[type];
+      form.querySelectorAll("[data-types]").forEach((group) => {
+        const show = group.dataset.types.split(" ").includes(type);
+        group.hidden = !show;
+        group.querySelectorAll("input").forEach((input) => {
+          input.required = show && input.dataset.required === "true";
+          if (type === "controller" && input.name === "name") input.required = true;
+          if (type === "http" && input.name === "name") input.required = true;
+        });
+      });
+      const name = form.querySelector("[name=name]");
+      name.placeholder = type === "shelly" ? "Optional" : "Name";
+    }
+
+    function addressText(device) {
+      if (device.role === "controller") return device.endpoint;
+      return device.channel ? device.host + " · output " + device.channel : device.host;
+    }
+
+    function eyebrow(device) {
+      if (device.role === "controller") return "Controller";
+      if (device.kind === "http-switch") return "Switch";
+      return "Shelly relay";
+    }
+
+    function paintState(view, device) {
+      if (view.busy) return;
+      if (device.role === "controller") {
+        view.status.classList.toggle("on", Boolean(device.online));
+        view.state.textContent = device.online ? "Reachable" : "No link";
+        view.detail.textContent = device.online ? "Endpoint answered" : "The controller did not answer";
+        view.error.textContent = "";
+        return;
+      }
+      const known = typeof device.output === "boolean";
+      view.status.classList.toggle("on", known && device.output);
+      if (!device.online) {
+        view.state.textContent = "No link";
+        view.detail.textContent = "The device did not answer";
+        view.error.textContent = "";
+        return;
+      }
+      if (!known) {
+        view.state.textContent = "No reading";
+        view.detail.textContent = "The device answered";
+        view.error.textContent = device.error || "";
+        return;
+      }
+      view.state.textContent = device.output ? "On" : "Off";
+      view.detail.textContent = typeof device.temperature_c === "number"
+        ? "Relay temperature " + device.temperature_c.toFixed(1) + " °C"
+        : "Output " + (device.output ? "closed" : "open");
+      view.error.textContent = "";
+    }
+
+    function statusBlock() {
+      const status = element("div", "status");
+      const copy = element("div");
+      const state = element("div", "label", "Checking…");
+      const detail = element("div", "detail", "Reading the device");
+      copy.append(state, detail);
+      status.append(element("div", "dot"), copy);
+      return { status, state, detail };
+    }
+
+    function removeButton(onConfirm) {
+      const button = element("button", "remove", "Remove");
+      button.type = "button";
+      const state = { confirming: false };
+      button.addEventListener("click", () => {
+        if (!state.confirming) {
+          state.confirming = true;
+          button.textContent = "Remove?";
+          button.classList.add("confirm");
+          return;
+        }
+        onConfirm(button);
+      });
+      return { button, state };
+    }
+
+    function createSwitchCard(device) {
+      const root = element("article", "card");
+      const top = element("div", "card-top");
+      const heading = element("div");
+      const name = element("h2");
+      const address = element("p", "address");
+      heading.append(element("p", "eyebrow", eyebrow(device)), name, address);
+      const removal = removeButton(() => removeDevice(card));
+      top.append(heading, removal.button);
+      const state = statusBlock();
+      const actions = element("div", "actions");
+      const onBtn = element("button", "on-btn", "Turn on");
+      const offBtn = element("button", "off-btn", "Turn off");
+      onBtn.type = "button";
+      offBtn.type = "button";
+      actions.append(onBtn, offBtn);
+      const error = element("p", "card-error");
+      root.append(top, state.status, actions, error);
+      grid.append(root);
+      const card = {
+        id: device.id,
+        role: "switch",
+        root, name, address, error, onBtn, offBtn,
+        status: state.status, state: state.state, detail: state.detail,
+        removal, busy: false
+      };
+      onBtn.addEventListener("click", () => setOutput(card, true, "/api/devices/" + card.id));
+      offBtn.addEventListener("click", () => setOutput(card, false, "/api/devices/" + card.id));
+      return card;
+    }
+
+    function createControlRow(card, control) {
+      const root = element("div", "control");
+      const top = element("div", "control-top");
+      const heading = element("div");
+      const name = element("h2");
+      const address = element("p", "address");
+      heading.append(element("p", "eyebrow", eyebrow(control)), name, address);
+      const removal = removeButton((button) => removeControl(card, row, button));
+      top.append(heading, removal.button);
+      const state = statusBlock();
+      const actions = element("div", "actions");
+      const onBtn = element("button", "on-btn", "Turn on");
+      const offBtn = element("button", "off-btn", "Turn off");
+      onBtn.type = "button";
+      offBtn.type = "button";
+      actions.append(onBtn, offBtn);
+      const error = element("p", "card-error");
+      root.append(top, state.status, actions, error);
+      const row = {
+        id: control.id,
+        root, name, address, error, onBtn, offBtn,
+        status: state.status, state: state.state, detail: state.detail,
+        removal, busy: false
+      };
+      const prefix = "/api/devices/" + card.id + "/controls/" + control.id;
+      onBtn.addEventListener("click", () => setOutput(row, true, prefix));
+      offBtn.addEventListener("click", () => setOutput(row, false, prefix));
+      return row;
+    }
+
+    function controlFields(formNode) {
+      const type = formNode.querySelector("[name=type]").value;
+      formNode.querySelectorAll("[data-types]").forEach((group) => {
+        const show = group.dataset.types.split(" ").includes(type);
+        group.hidden = !show;
+        group.querySelectorAll("input").forEach((input) => {
+          input.required = show && input.dataset.required === "true";
+          if (input.name === "name") {
+            input.required = type === "http";
+            input.placeholder = type === "http" ? "Name" : "Optional";
+          }
+        });
+      });
+    }
+
+    function createControllerCard(device) {
+      const root = element("article", "card controller");
+      const top = element("div", "card-top");
+      const heading = element("div");
+      const name = element("h2");
+      const address = element("p", "address");
+      heading.append(element("p", "eyebrow", "Controller"), name, address);
+      const removal = removeButton(() => removeDevice(card));
+      top.append(heading, removal.button);
+      const state = statusBlock();
+      const error = element("p", "card-error");
+      const list = element("div", "control-list");
+      const none = element("p", "none", "No switches on this controller yet.");
+      const controlForm = element("form", "control-form");
+      controlForm.innerHTML = [
+        '<label class="span-2">Switch<select name="type"><option value="shelly">Shelly relay</option><option value="http">Other switch</option></select></label>',
+        '<label data-types="shelly http">Address<input name="host" data-required="true" autocomplete="off" placeholder="192.168.140.36" spellcheck="false"></label>',
+        '<label data-types="shelly http">Name<input name="name" maxlength="60" autocomplete="off" placeholder="Optional"></label>',
+        '<label data-types="http">On path<input name="on_path" data-required="true" autocomplete="off" placeholder="/switch/on" spellcheck="false"></label>',
+        '<label data-types="http">Off path<input name="off_path" data-required="true" autocomplete="off" placeholder="/switch/off" spellcheck="false"></label>',
+        '<label data-types="http">Status path<input name="status_path" data-required="true" autocomplete="off" placeholder="/status" spellcheck="false"></label>',
+        '<label data-types="http">Status field<input name="status_key" autocomplete="off" placeholder="output" spellcheck="false"></label>',
+        '<button class="add span-2" type="submit">Add switch</button>'
+      ].join("");
+      const message = element("p", "message");
+      root.append(top, state.status, error, list, none, controlForm, message);
+      grid.append(root);
+      const card = {
+        id: device.id,
+        role: "controller",
+        root, name, address, error, message, list, none,
+        status: state.status, state: state.state, detail: state.detail,
+        removal, rows: new Map(), busy: false
+      };
+      controlForm.querySelector("[name=type]").addEventListener("change", () => controlFields(controlForm));
+      controlFields(controlForm);
+      controlForm.addEventListener("submit", (event) => addControl(card, controlForm, event));
+      return card;
+    }
+
+    function paintControls(card, controls) {
+      const seen = new Set();
+      controls.forEach((control) => {
+        seen.add(control.id);
+        let row = card.rows.get(control.id);
+        if (!row) {
+          row = createControlRow(card, control);
+          card.rows.set(control.id, row);
+          card.list.append(row.root);
+        }
+        row.name.textContent = control.name;
+        row.address.textContent = addressText(control);
+        paintState(row, control);
+      });
+      card.rows.forEach((row, id) => {
+        if (seen.has(id)) return;
+        row.root.remove();
+        card.rows.delete(id);
+      });
+      card.none.hidden = controls.length > 0;
+    }
+
+    function render(devices) {
+      const seen = new Set();
+      devices.forEach((device) => {
+        seen.add(device.id);
+        let card = cards.get(device.id);
+        if (!card || card.role !== device.role) {
+          if (card) card.root.remove();
+          card = device.role === "controller" ? createControllerCard(device) : createSwitchCard(device);
+          cards.set(device.id, card);
+        }
+        card.name.textContent = device.name;
+        card.address.textContent = addressText(device);
+        paintState(card, device);
+        if (device.role === "controller") paintControls(card, device.controls || []);
+      });
+      cards.forEach((card, id) => {
+        if (seen.has(id)) return;
+        card.root.remove();
+        cards.delete(id);
+      });
+      empty.hidden = devices.length > 0;
+    }
+
+    async function loadDevices() {
+      const response = await fetch("/api/devices", { cache: "no-store" });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "The device list did not load");
+      return data.devices;
+    }
+
+    async function refresh() {
+      if (refreshing) return;
+      refreshing = true;
+      const version = listVersion;
+      try {
+        const devices = await loadDevices();
+        if (version === listVersion) render(devices);
+      } catch (error) {
+        if (version === listVersion && dialog.open) setMessage(error.message, "error");
+      } finally {
+        refreshing = false;
+      }
+    }
+
+    async function setOutput(view, on, prefix) {
+      view.busy = true;
+      view.onBtn.disabled = true;
+      view.offBtn.disabled = true;
+      view.error.textContent = "";
+      try {
+        const response = await fetch(prefix + "/" + (on ? "on" : "off"), { method: "POST" });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || "Command failed");
+        view.status.classList.toggle("on", on);
+        view.state.textContent = on ? "On" : "Off";
+        listVersion += 1;
+        render(await loadDevices());
+      } catch (error) {
+        view.error.textContent = error.message;
+      } finally {
+        view.busy = false;
+        view.onBtn.disabled = false;
+        view.offBtn.disabled = false;
+      }
+    }
+
+    async function removeDevice(card) {
+      card.removal.button.disabled = true;
+      try {
+        const response = await fetch("/api/devices/" + card.id, { method: "DELETE" });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || "Could not remove the device");
+        listVersion += 1;
+        card.root.remove();
+        cards.delete(card.id);
+        empty.hidden = cards.size > 0;
+        render(await loadDevices());
+      } catch (error) {
+        card.error.textContent = error.message;
+        card.removal.button.disabled = false;
+      }
+    }
+
+    async function removeControl(card, row, button) {
+      button.disabled = true;
+      try {
+        const response = await fetch("/api/devices/" + card.id + "/controls/" + row.id, { method: "DELETE" });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || "Could not remove the switch");
+        listVersion += 1;
+        card.message.textContent = "Removed " + row.name.textContent;
+        card.message.className = "message ok";
+        render(await loadDevices());
+      } catch (error) {
+        row.error.textContent = error.message;
+        button.disabled = false;
+      }
+    }
+
+    async function addControl(card, controlForm, event) {
+      event.preventDefault();
+      const submit = controlForm.querySelector("button");
+      const values = new FormData(controlForm);
+      const body = {
+        type: values.get("type"),
+        host: values.get("host"),
+        name: values.get("name"),
+        on_path: values.get("on_path"),
+        off_path: values.get("off_path"),
+        status_path: values.get("status_path"),
+        status_key: values.get("status_key")
+      };
+      submit.disabled = true;
+      card.message.textContent = "Adding the switch…";
+      card.message.className = "message";
+      try {
+        const response = await fetch("/api/devices/" + card.id + "/controls", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body)
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || "Could not add the switch");
+        controlForm.reset();
+        controlFields(controlForm);
+        card.message.textContent = "Added " + data.added.map((item) => item.name).join(", ");
+        card.message.className = "message ok";
+        listVersion += 1;
+        render(await loadDevices());
+      } catch (error) {
+        card.message.textContent = error.message;
+        card.message.className = "message error";
+      } finally {
+        submit.disabled = false;
+      }
+    }
+
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const submit = form.querySelector(".add");
+      const values = new FormData(form);
+      const type = values.get("type");
+      const body = {
+        type,
+        name: values.get("name") || "",
+        host: type === "controller" ? values.get("endpoint") : values.get("host"),
+        on_path: values.get("on_path") || "",
+        off_path: values.get("off_path") || "",
+        status_path: values.get("status_path") || "",
+        status_key: values.get("status_key") || ""
+      };
+      submit.disabled = true;
+      setMessage(type === "shelly" ? "Looking up " + body.host + "…" : "Adding " + (body.name || body.host) + "…");
+      try {
+        const response = await fetch("/api/devices", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body)
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || "Could not add the device");
+        form.reset();
+        syncForm();
+        setMessage("");
+        dialog.close();
+        listVersion += 1;
+        render(await loadDevices());
+      } catch (error) {
+        setMessage(error.message, "error");
+      } finally {
+        submit.disabled = false;
+      }
+    });
+
+    typeSelect.addEventListener("change", syncForm);
+    document.querySelector("#open-add").addEventListener("click", () => {
+      setMessage("");
+      dialog.showModal();
+    });
+    document.querySelector("#close-add").addEventListener("click", () => dialog.close());
+    dialog.addEventListener("click", (event) => {
+      if (event.target === dialog) dialog.close();
+    });
+    syncForm();
+    refresh();
+    setInterval(refresh, 2000);
+  </script>
+</body>
+</html>

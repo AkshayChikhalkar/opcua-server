@@ -1,0 +1,10 @@
+{
+  "shelly": "http://192.168.140.36",
+  "interval_seconds": 5,
+  "devices": {
+    "aa:bb:cc:dd:ee:ff": {
+      "name": "Lynx Smart BMS NG",
+      "key": "paste the advertisement key from VictronConnect"
+    }
+  }
+}

@@ -1,0 +1,131 @@
+{
+  "uid": "lynx-bms",
+  "title": "Lynx Smart BMS",
+  "description": "Instant readout forwarded by the Shelly Pro 1 over Wi-Fi.",
+  "tags": ["lynx", "bms"],
+  "timezone": "browser",
+  "refresh": "5s",
+  "schemaVersion": 39,
+  "editable": true,
+  "time": {"from": "now-6h", "to": "now"},
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Recorder",
+      "gridPos": {"x": 0, "y": 0, "w": 4, "h": 4},
+      "datasource": {"type": "grafana-postgresql-datasource", "uid": "P40AE60E18F02DE32"},
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            {"type": "value", "options": {"0": {"text": "Offline", "color": "red"}, "1": {"text": "Live", "color": "green"}}}
+          ],
+          "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "green", "value": 1}]}
+        }
+      },
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "background", "graphMode": "none", "textMode": "value"},
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {"type": "grafana-postgresql-datasource", "uid": "P40AE60E18F02DE32"},
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT CASE WHEN EXISTS (SELECT 1 FROM recorder_status rs JOIN controllers c ON c.id = rs.controller_id WHERE c.endpoint LIKE 'ble://%' AND rs.listening AND rs.last_seen > now() - interval '30 seconds') THEN 1 ELSE 0 END AS \"Recorder\""
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "State of charge",
+      "gridPos": {"x": 4, "y": 0, "w": 4, "h": 4},
+      "datasource": {"type": "grafana-postgresql-datasource", "uid": "P40AE60E18F02DE32"},
+      "fieldConfig": {"defaults": {"unit": "percent", "decimals": 1, "min": 0, "max": 100}},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "area", "textMode": "value"},
+      "targets": [{"refId": "A", "datasource": {"type": "grafana-postgresql-datasource", "uid": "P40AE60E18F02DE32"}, "format": "table", "rawQuery": true, "rawSql": "SELECT l.value_num AS \"State of charge\" FROM latest l JOIN signals s ON s.id = l.signal_id JOIN controllers c ON c.id = s.controller_id WHERE c.endpoint LIKE 'ble://%' AND s.identifier = 'soc_pct'"}]
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Voltage",
+      "gridPos": {"x": 8, "y": 0, "w": 4, "h": 4},
+      "datasource": {"type": "grafana-postgresql-datasource", "uid": "P40AE60E18F02DE32"},
+      "fieldConfig": {"defaults": {"unit": "volt", "decimals": 2}},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "none", "textMode": "value"},
+      "targets": [{"refId": "A", "datasource": {"type": "grafana-postgresql-datasource", "uid": "P40AE60E18F02DE32"}, "format": "table", "rawQuery": true, "rawSql": "SELECT l.value_num AS \"Voltage\" FROM latest l JOIN signals s ON s.id = l.signal_id JOIN controllers c ON c.id = s.controller_id WHERE c.endpoint LIKE 'ble://%' AND s.identifier = 'voltage_v'"}]
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Current",
+      "gridPos": {"x": 12, "y": 0, "w": 4, "h": 4},
+      "datasource": {"type": "grafana-postgresql-datasource", "uid": "P40AE60E18F02DE32"},
+      "fieldConfig": {"defaults": {"unit": "amp", "decimals": 1}},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "none", "textMode": "value"},
+      "targets": [{"refId": "A", "datasource": {"type": "grafana-postgresql-datasource", "uid": "P40AE60E18F02DE32"}, "format": "table", "rawQuery": true, "rawSql": "SELECT l.value_num AS \"Current\" FROM latest l JOIN signals s ON s.id = l.signal_id JOIN controllers c ON c.id = s.controller_id WHERE c.endpoint LIKE 'ble://%' AND s.identifier = 'current_a'"}]
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "Power",
+      "gridPos": {"x": 16, "y": 0, "w": 4, "h": 4},
+      "datasource": {"type": "grafana-postgresql-datasource", "uid": "P40AE60E18F02DE32"},
+      "fieldConfig": {"defaults": {"unit": "watt", "decimals": 0}},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "none", "textMode": "value"},
+      "targets": [{"refId": "A", "datasource": {"type": "grafana-postgresql-datasource", "uid": "P40AE60E18F02DE32"}, "format": "table", "rawQuery": true, "rawSql": "SELECT l.value_num AS \"Power\" FROM latest l JOIN signals s ON s.id = l.signal_id JOIN controllers c ON c.id = s.controller_id WHERE c.endpoint LIKE 'ble://%' AND s.identifier = 'power_w'"}]
+    },
+    {
+      "id": 6,
+      "type": "stat",
+      "title": "Temperature",
+      "gridPos": {"x": 20, "y": 0, "w": 4, "h": 4},
+      "datasource": {"type": "grafana-postgresql-datasource", "uid": "P40AE60E18F02DE32"},
+      "fieldConfig": {"defaults": {"unit": "celsius", "decimals": 0}},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "none", "textMode": "value"},
+      "targets": [{"refId": "A", "datasource": {"type": "grafana-postgresql-datasource", "uid": "P40AE60E18F02DE32"}, "format": "table", "rawQuery": true, "rawSql": "SELECT l.value_num AS \"Temperature\" FROM latest l JOIN signals s ON s.id = l.signal_id JOIN controllers c ON c.id = s.controller_id WHERE c.endpoint LIKE 'ble://%' AND s.identifier = 'battery_temperature_c'"}]
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Voltage and current",
+      "gridPos": {"x": 0, "y": 4, "w": 12, "h": 8},
+      "datasource": {"type": "grafana-postgresql-datasource", "uid": "P40AE60E18F02DE32"},
+      "fieldConfig": {"defaults": {"custom": {"drawStyle": "line", "lineWidth": 2, "spanNulls": true, "showPoints": "never"}}},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}},
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {"type": "grafana-postgresql-datasource", "uid": "P40AE60E18F02DE32"},
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT sa.received_at AS \"time\", sa.value_num AS \"Voltage (V)\" FROM samples sa JOIN signals s ON s.id = sa.signal_id JOIN controllers c ON c.id = s.controller_id WHERE c.endpoint LIKE 'ble://%' AND s.identifier = 'voltage_v' AND $__timeFilter(sa.received_at) ORDER BY 1"
+        },
+        {
+          "refId": "B",
+          "datasource": {"type": "grafana-postgresql-datasource", "uid": "P40AE60E18F02DE32"},
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT sa.received_at AS \"time\", sa.value_num AS \"Current (A)\" FROM samples sa JOIN signals s ON s.id = sa.signal_id JOIN controllers c ON c.id = s.controller_id WHERE c.endpoint LIKE 'ble://%' AND s.identifier = 'current_a' AND $__timeFilter(sa.received_at) ORDER BY 1"
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "State of charge",
+      "gridPos": {"x": 12, "y": 4, "w": 12, "h": 8},
+      "datasource": {"type": "grafana-postgresql-datasource", "uid": "P40AE60E18F02DE32"},
+      "fieldConfig": {"defaults": {"unit": "percent", "min": 0, "max": 100, "custom": {"drawStyle": "line", "lineWidth": 2, "spanNulls": true, "showPoints": "never"}}},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "single"}},
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {"type": "grafana-postgresql-datasource", "uid": "P40AE60E18F02DE32"},
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT sa.received_at AS \"time\", sa.value_num AS \"State of charge\" FROM samples sa JOIN signals s ON s.id = sa.signal_id JOIN controllers c ON c.id = s.controller_id WHERE c.endpoint LIKE 'ble://%' AND s.identifier = 'soc_pct' AND $__timeFilter(sa.received_at) ORDER BY 1"
+        }
+      ]
+    }
+  ]
+}

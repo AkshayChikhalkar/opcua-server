@@ -1,3 +1,4 @@
 asyncua==1.1.8
 cryptography==46.0.5
 psycopg[binary]==3.2.10
+victron_ble==0.9.3
