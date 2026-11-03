@@ -1,8 +1,7 @@
 """Local dashboard for devices on the network.
 
-A device can be a Shelly relay, another HTTP switch, or a controller with
-its own switches. The browser talks only to this server. Shelly devices do
-not send CORS headers, so the server calls them over HTTP.
+A device can be a Shelly relay, another HTTP switch, a NETIO power strip,
+or a controller with its own switches. The browser talks only to this server.
 """
 
 from __future__ import annotations
@@ -27,6 +26,8 @@ ROOT = Path(__file__).resolve().parent
 INDEX = ROOT / "index.html"
 STORE = ROOT / "devices.json"
 LOCK = threading.Lock()
+NETIO_GUARD = threading.Lock()
+NETIO_LOCKS: dict[str, threading.Lock] = {}
 HOST_PATTERN = re.compile(
     r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$"
 )
@@ -38,6 +39,8 @@ DEVICE_ITEM = re.compile(r"^/api/devices/([a-f0-9]{32})$")
 CONTROL_ADD = re.compile(r"^/api/devices/([a-f0-9]{32})/controls$")
 CONTROL_CMD = re.compile(r"^/api/devices/([a-f0-9]{32})/controls/([a-f0-9]{32})/(on|off)$")
 CONTROL_ITEM = re.compile(r"^/api/devices/([a-f0-9]{32})/controls/([a-f0-9]{32})$")
+OUTLET_CMD = re.compile(r"^/api/devices/([a-f0-9]{32})/outlets/([1-4])/(on|off)$")
+CRED_PATTERN = re.compile(r"^[A-Za-z0-9_.@-]{1,32}$")
 
 SEED = [
     {
@@ -313,10 +316,99 @@ def normalize_switch(item: dict, require_id: bool) -> dict:
     return record
 
 
+def parse_credential(raw: str, fallback: str, label: str) -> str:
+    value = raw.strip() or fallback
+    if not CRED_PATTERN.fullmatch(value):
+        raise DeviceError("Enter a %s without spaces" % label)
+    return value
+
+
+def netio_lock(host: str) -> threading.Lock:
+    with NETIO_GUARD:
+        lock = NETIO_LOCKS.get(host)
+        if lock is None:
+            lock = threading.Lock()
+            NETIO_LOCKS[host] = lock
+        return lock
+
+
+def kshell_line(reader) -> str:
+    raw = reader.readline()
+    if not raw:
+        raise DeviceError("The power strip closed the connection", 502)
+    return raw.decode("ascii", "replace").strip()
+
+
+def kshell(host: str, username: str, password: str, commands: list[str]) -> list[str]:
+    try:
+        sock = socket.create_connection((host, 1234), timeout=2)
+    except OSError as error:
+        raise DeviceError("Nothing answered at that address", 502) from error
+    try:
+        sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        sock.settimeout(2)
+        reader = sock.makefile("rb")
+        banner = kshell_line(reader)
+        if not banner.startswith("100 "):
+            raise DeviceError("That address is not a NETIO power strip")
+        sock.sendall(("login %s %s\r\n" % (username, password)).encode())
+        if not kshell_line(reader).startswith("250"):
+            raise DeviceError("The power strip refused the login", 401)
+        replies = []
+        for command in commands:
+            sock.sendall((command + "\r\n").encode())
+            replies.append(kshell_line(reader))
+        sock.sendall(b"quit\r\n")
+        return replies
+    except DeviceError:
+        raise
+    except (TimeoutError, OSError) as error:
+        raise DeviceError("Nothing answered at that address", 502) from error
+    finally:
+        sock.close()
+
+
+def parse_port_list(line: str) -> list[bool]:
+    parts = line.split()
+    if len(parts) < 2 or parts[0] != "250" or not re.fullmatch(r"[01]{4}", parts[1]):
+        raise DeviceError("The power strip returned an unexpected status")
+    return [bit == "1" for bit in parts[1]]
+
+
+def normalize_netio(item: dict) -> dict:
+    device_id = item.get("id")
+    name = item.get("name")
+    host = item.get("host")
+    username = item.get("username")
+    password = item.get("password")
+    if (
+        not isinstance(device_id, str)
+        or not ID_PATTERN.fullmatch(device_id)
+        or not isinstance(name, str)
+        or not name.strip()
+        or not isinstance(host, str)
+        or not isinstance(username, str)
+        or not CRED_PATTERN.fullmatch(username)
+        or not isinstance(password, str)
+        or not CRED_PATTERN.fullmatch(password)
+    ):
+        raise DeviceError("The saved device list is unreadable", 500)
+    return {
+        "id": device_id,
+        "name": name.strip()[:60],
+        "host": host,
+        "kind": "netio",
+        "username": username,
+        "password": password,
+    }
+
+
 def normalize(item: object) -> dict:
     if not isinstance(item, dict):
         raise DeviceError("The saved device list is unreadable", 500)
     kind = item.get("kind")
+    if kind == "netio":
+        return normalize_netio(item)
     if kind == "controller":
         device_id = item.get("id")
         name = item.get("name")
@@ -433,7 +525,9 @@ def add_device(payload: dict) -> list[dict]:
         return add_http(payload, name, host)
     if device_type == "controller":
         return [add_controller(name, host)]
-    raise DeviceError("Choose a Shelly relay, a switch, or a controller")
+    if device_type == "netio":
+        return [add_netio(payload, name, host)]
+    raise DeviceError("Choose a Shelly relay, a switch, a power strip, or a controller")
 
 
 def add_shelly(host_raw: str, name_raw: str) -> list[dict]:
@@ -478,6 +572,38 @@ def add_http(payload: dict, name_raw: str, host_raw: str) -> list[dict]:
             raise DeviceError("That switch is already on the page", 409)
         current.extend(added)
         return added
+
+    return mutate(change)
+
+
+def add_netio(payload: dict, name_raw: str, host_raw: str) -> dict:
+    host = parse_host(host_raw.strip())
+    username_raw = payload.get("username", "")
+    password_raw = payload.get("password", "")
+    if not isinstance(username_raw, str) or not isinstance(password_raw, str):
+        raise DeviceError("Enter the power strip login")
+    username = parse_credential(username_raw, "admin", "username")
+    password = parse_credential(password_raw, "admin", "password")
+    name = clean_name(name_raw, "NETIO-230B")
+    with netio_lock(host):
+        replies = kshell(host, username, password, ["port list"])
+    parse_port_list(replies[0])
+
+    def change(current: list[dict]) -> dict:
+        if any(item.get("kind") == "netio" and item.get("host") == host for item in current):
+            raise DeviceError("That power strip is already on the page", 409)
+        record = {
+            "id": uuid.uuid4().hex,
+            "name": name,
+            "host": host,
+            "kind": "netio",
+            "username": username,
+            "password": password,
+        }
+        current.append(record)
+        shown = dict(record)
+        shown.pop("password", None)
+        return shown
 
     return mutate(change)
 
@@ -570,6 +696,51 @@ def find_control(device_id: str, control_id: str) -> dict:
     raise DeviceError("That control is not on the controller", 404)
 
 
+def outlet_rows(states: list[bool]) -> list[dict]:
+    return [{"index": index + 1, "output": state} for index, state in enumerate(states)]
+
+
+def set_outlet(device: dict, index: int, on: bool) -> list[dict]:
+    if device["kind"] != "netio" or index < 1 or index > 4:
+        raise DeviceError("That outlet is not on the strip", 404)
+    with netio_lock(device["host"]):
+        replies = kshell(
+            device["host"],
+            device["username"],
+            device["password"],
+            ["port %d %d" % (index, 1 if on else 0), "port list"],
+        )
+    if not replies or not replies[0].startswith("250"):
+        raise DeviceError("The power strip refused the command")
+    states = parse_port_list(replies[1])
+    states[index - 1] = on
+    return outlet_rows(states)
+
+
+def read_netio(device: dict) -> dict:
+    public = {
+        "id": device["id"],
+        "name": device["name"],
+        "host": device["host"],
+        "kind": "netio",
+        "role": "netio",
+        "online": False,
+        "outlets": [],
+        "error": "The power strip did not answer",
+    }
+    try:
+        with netio_lock(device["host"]):
+            replies = kshell(device["host"], device["username"], device["password"], ["port list"])
+        public["outlets"] = outlet_rows(parse_port_list(replies[0]))
+        public["online"] = True
+        public["error"] = None
+    except DeviceError as error:
+        if error.status != 502:
+            public["online"] = True
+            public["error"] = str(error)
+    return public
+
+
 def set_switch(switch: dict, on: bool) -> None:
     if switch["kind"] == "shelly-gen2":
         http_call(
@@ -598,18 +769,18 @@ def read_switch(switch: dict) -> dict:
     }
     try:
         if switch["kind"] == "shelly-gen2":
-            data = http_json(switch["host"], "/rpc/Switch.GetStatus?id=%d" % switch["switch_id"], 3)
+            data = http_json(switch["host"], "/rpc/Switch.GetStatus?id=%d" % switch["switch_id"], 1)
             temperature = data.get("temperature") if isinstance(data.get("temperature"), dict) else {}
             public["output"] = bool(data.get("output"))
             degrees = temperature.get("tC")
             public["temperature_c"] = degrees if isinstance(degrees, (int, float)) else None
             public["switch_id"] = switch["switch_id"]
         elif switch["kind"] == "shelly-gen1":
-            data = http_json(switch["host"], "/relay/%d" % switch["switch_id"], 3)
+            data = http_json(switch["host"], "/relay/%d" % switch["switch_id"], 1)
             public["output"] = bool(data.get("ison"))
             public["switch_id"] = switch["switch_id"]
         else:
-            data = http_json(switch["host"], switch["status_path"], 3)
+            data = http_json(switch["host"], switch["status_path"], 1)
             public["output"] = as_bool(lookup_key(data, switch["status_key"]))
         public["online"] = True
         public["error"] = None
@@ -629,6 +800,8 @@ def tcp_open(host: str, port: int) -> bool:
 
 
 def read_device(device: dict) -> dict:
+    if device["kind"] == "netio":
+        return read_netio(device)
     if device["kind"] != "controller":
         return read_switch(device)
     controls = device["controls"]
@@ -726,6 +899,12 @@ class Handler(BaseHTTPRequestHandler):
             if control_add:
                 added = add_control(control_add.group(1), self._read_json())
                 self._json(201, {"added": added})
+                return
+            outlet_cmd = OUTLET_CMD.fullmatch(path)
+            if outlet_cmd:
+                device = find_device(outlet_cmd.group(1))
+                outlets = set_outlet(device, int(outlet_cmd.group(2)), outlet_cmd.group(3) == "on")
+                self._json(200, {"ok": True, "outlets": outlets})
                 return
             device_cmd = DEVICE_CMD.fullmatch(path)
             if device_cmd:

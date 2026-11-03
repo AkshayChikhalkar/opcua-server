@@ -243,12 +243,86 @@
       gap: 12px;
     }
 
+    .actions.single { grid-template-columns: 1fr; }
+
+    .actions.bms-switches { grid-template-columns: 1fr; }
+
+    .switch-block {
+      display: grid;
+      gap: 8px;
+      padding: 14px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+    }
+
+    .switch-name {
+      margin: 0;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 650;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .switch-block .detail { margin: 0; }
+
+    .ble-btn {
+      background: transparent;
+      color: var(--text);
+      border: 1px solid var(--line);
+    }
+
     .off-btn { background: var(--off); color: #1b1f19; }
+
+    .toggle-btn.confirm {
+      background: var(--danger);
+      color: #2a100e;
+    }
 
     .card-error {
       min-height: 1.2em;
       margin-top: 12px;
       font-size: 14px;
+    }
+
+    .outlets { margin-top: 8px; }
+
+    .outlet {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 12px;
+      align-items: center;
+      margin-top: 12px;
+      padding-top: 12px;
+      border-top: 1px solid var(--line);
+    }
+
+    .outlet .label { font-size: 18px; }
+
+    .switch {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      width: 148px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      overflow: hidden;
+      background: var(--field);
+    }
+
+    .switch button {
+      border-radius: 0;
+      background: transparent;
+      color: var(--muted);
+    }
+
+    .switch button[aria-pressed="true"][data-state="off"] {
+      background: var(--off);
+      color: #1b1f19;
+    }
+
+    .switch button[aria-pressed="true"][data-state="on"] {
+      background: var(--on);
+      color: #10210d;
     }
 
     .control {
@@ -311,12 +385,13 @@
           Type
           <select name="type">
             <option value="shelly">Shelly relay</option>
+            <option value="netio">NETIO power strip</option>
             <option value="http">Other switch</option>
             <option value="controller">Controller</option>
           </select>
         </label>
         <p class="hint span-2" id="type-hint"></p>
-        <label data-types="shelly http">
+        <label data-types="shelly http netio">
           Address
           <input name="host" data-required="true" autocomplete="off" placeholder="192.168.140.36" spellcheck="false">
         </label>
@@ -324,9 +399,17 @@
           Endpoint
           <input name="endpoint" data-required="true" autocomplete="off" placeholder="opc.tcp://192.168.1.10:4840" spellcheck="false">
         </label>
-        <label data-types="shelly http controller">
+        <label data-types="shelly http controller netio">
           Name
           <input name="name" maxlength="60" autocomplete="off" placeholder="Optional">
+        </label>
+        <label data-types="netio">
+          Username
+          <input name="username" maxlength="32" autocomplete="off" placeholder="admin" spellcheck="false">
+        </label>
+        <label data-types="netio">
+          Password
+          <input name="password" type="password" maxlength="32" autocomplete="off" placeholder="admin">
         </label>
         <label data-types="http">
           On path
@@ -367,6 +450,7 @@
 
     const hints = {
       shelly: "The page finds the relay at that address and adds each output.",
+      netio: "Adds the four outlets on a NETIO power strip. Off and On show the live state.",
       http: "Use this for a switch with its own on, off, and status links.",
       controller: "The page checks that the endpoint answers. Add each switch on the controller card."
     };
@@ -396,7 +480,9 @@
         });
       });
       const name = form.querySelector("[name=name]");
-      name.placeholder = type === "shelly" ? "Optional" : "Name";
+      name.placeholder = type === "http" || type === "controller" ? "Name" : "Optional";
+      const host = form.querySelector("[name=host]");
+      host.placeholder = type === "netio" ? "192.168.10.100" : "192.168.140.36";
     }
 
     function addressText(device) {
@@ -404,8 +490,14 @@
       return device.channel ? device.host + " · output " + device.channel : device.host;
     }
 
+    function isBms(device) {
+      return /lynx|bms/i.test(device.name || "");
+    }
+
     function eyebrow(device) {
+      if (isBms(device)) return "Lynx BMS";
       if (device.role === "controller") return "Controller";
+      if (device.role === "netio") return "Power strip";
       if (device.kind === "http-switch") return "Switch";
       return "Shelly relay";
     }
@@ -433,11 +525,28 @@
         view.error.textContent = device.error || "";
         return;
       }
-      view.state.textContent = device.output ? "On" : "Off";
-      view.detail.textContent = typeof device.temperature_c === "number"
-        ? "Relay temperature " + device.temperature_c.toFixed(1) + " °C"
-        : "Output " + (device.output ? "closed" : "open");
+      const bms = isBms(device);
+      view.state.textContent = device.output ? (bms ? "Remote closed" : "On") : (bms ? "Remote open" : "Off");
+      view.detail.textContent = bms
+        ? (device.output
+          ? "The Lynx is allowed to run."
+          : "The Lynx is forced off. The Bluetooth switch cannot turn it on.")
+        : (typeof device.temperature_c === "number"
+          ? "Relay temperature " + device.temperature_c.toFixed(1) + " °C"
+          : "Output " + (device.output ? "closed" : "open"));
       view.error.textContent = "";
+      paintToggle(view, device);
+    }
+
+    function paintToggle(view, device) {
+      if (!view.toggleBtn || view.confirming) return;
+      const on = device.output === true;
+      view.nextOn = !on;
+      view.toggleBtn.textContent = on ? "Turn wired remote off" : "Turn wired remote on";
+      view.toggleBtn.classList.toggle("on-btn", !on);
+      view.toggleBtn.classList.toggle("off-btn", on);
+      view.toggleBtn.classList.remove("confirm");
+      view.toggleBtn.disabled = !device.online || typeof device.output !== "boolean";
     }
 
     function statusBlock() {
@@ -466,6 +575,155 @@
       return { button, state };
     }
 
+    function bmsBlocks(error) {
+      const wired = element("div", "switch-block");
+      wired.append(
+        element("p", "switch-name", "Wired remote"),
+        element("p", "detail", "Pins 10 and 11. Closed lets the Lynx run. Open forces it off.")
+      );
+      const toggleBtn = element("button", "toggle-btn on-btn", "Turn wired remote on");
+      toggleBtn.type = "button";
+      wired.append(toggleBtn);
+
+      const bluetooth = element("div", "switch-block");
+      bluetooth.append(
+        element("p", "switch-name", "Bluetooth switch"),
+        element("p", "detail", "On, Standby, and Off in VictronConnect. It works only while the wired remote is closed.")
+      );
+      const bleBtn = element("button", "ble-btn", "Bluetooth on/off");
+      bleBtn.type = "button";
+      bleBtn.addEventListener("click", () => {
+        error.textContent = "The Bluetooth switch is changed in the VictronConnect app. This page cannot send it.";
+      });
+      bluetooth.append(bleBtn);
+      return { toggleBtn, blocks: [wired, bluetooth] };
+    }
+
+    function createNetioCard(device) {
+      const root = element("article", "card");
+      const top = element("div", "card-top");
+      const heading = element("div");
+      const name = element("h2");
+      const address = element("p", "address");
+      heading.append(element("p", "eyebrow", "Power strip"), name, address);
+      const removal = removeButton(() => removeDevice(card));
+      top.append(heading, removal.button);
+      const state = statusBlock();
+      const error = element("p", "card-error");
+      const list = element("div", "outlets");
+      const outlets = new Map();
+      for (let index = 1; index <= 4; index += 1) {
+        const rowRoot = element("div", "outlet");
+        const choices = element("div", "switch");
+        const offBtn = element("button", "", "Off");
+        const onBtn = element("button", "", "On");
+        offBtn.type = "button";
+        onBtn.type = "button";
+        offBtn.dataset.state = "off";
+        onBtn.dataset.state = "on";
+        offBtn.setAttribute("aria-pressed", "false");
+        onBtn.setAttribute("aria-pressed", "false");
+        choices.append(offBtn, onBtn);
+        rowRoot.append(element("div", "label", "Outlet " + index), choices);
+        list.append(rowRoot);
+        const row = { index, offBtn, onBtn, busy: false, output: false };
+        outlets.set(index, row);
+      }
+      root.append(top, state.status, list, error);
+      grid.append(root);
+      const card = {
+        id: device.id,
+        role: "netio",
+        root, name, address, error, outlets,
+        status: state.status, state: state.state, detail: state.detail,
+        removal
+      };
+      outlets.forEach((row) => {
+        row.offBtn.addEventListener("click", () => chooseOutlet(card, row, false));
+        row.onBtn.addEventListener("click", () => chooseOutlet(card, row, true));
+      });
+      return card;
+    }
+
+    function paintNetio(card, device) {
+      card.status.classList.toggle("on", Boolean(device.online));
+      if (!device.online) {
+        card.state.textContent = "No link";
+        card.detail.textContent = "The power strip did not answer";
+        card.error.textContent = "";
+        card.outlets.forEach((row) => {
+          row.offBtn.disabled = true;
+          row.onBtn.disabled = true;
+        });
+        return;
+      }
+      card.state.textContent = "Online";
+      card.error.textContent = device.error || "";
+      (device.outlets || []).forEach((outlet) => {
+        const row = card.outlets.get(outlet.index);
+        if (!row || row.busy) return;
+        paintOutlet(row, outlet.output);
+      });
+      showOutletCount(card);
+    }
+
+    function showOutletCount(card) {
+      let onCount = 0;
+      card.outlets.forEach((row) => { if (row.output) onCount += 1; });
+      card.detail.textContent = onCount + " of 4 outlets on";
+    }
+
+    function setPressed(button, pressed) {
+      const value = pressed ? "true" : "false";
+      if (button.getAttribute("aria-pressed") !== value) button.setAttribute("aria-pressed", value);
+    }
+
+    function paintOutlet(row, output, source) {
+      const on = Boolean(output);
+      if (source !== "command" && row.hold) {
+        if (on === row.hold.output || performance.now() >= row.hold.until) row.hold = null;
+        else return;
+      }
+      row.output = on;
+      setPressed(row.offBtn, !on);
+      setPressed(row.onBtn, on);
+      row.offBtn.disabled = false;
+      row.onBtn.disabled = false;
+    }
+
+    function paintOutletList(card, outlets) {
+      outlets.forEach((outlet) => {
+        const row = card.outlets.get(outlet.index);
+        if (row) paintOutlet(row, outlet.output);
+      });
+      card.state.textContent = "Online";
+      card.status.classList.add("on");
+      showOutletCount(card);
+    }
+
+    async function chooseOutlet(card, row, on) {
+      if (row.busy || row.output === on) return;
+      const previous = row.output;
+      row.busy = true;
+      row.hold = { output: on, until: performance.now() + 2000 };
+      card.error.textContent = "";
+      paintOutlet(row, on, "command");
+      showOutletCount(card);
+      try {
+        const response = await fetch("/api/devices/" + card.id + "/outlets/" + row.index + "/" + (on ? "on" : "off"), { method: "POST" });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || "Command failed");
+        if (Array.isArray(data.outlets)) paintOutletList(card, data.outlets);
+      } catch (error) {
+        card.error.textContent = error.message;
+        row.hold = null;
+        paintOutlet(row, previous, "command");
+        showOutletCount(card);
+      } finally {
+        row.busy = false;
+      }
+    }
+
     function createSwitchCard(device) {
       const root = element("article", "card");
       const top = element("div", "card-top");
@@ -477,23 +735,38 @@
       top.append(heading, removal.button);
       const state = statusBlock();
       const actions = element("div", "actions");
-      const onBtn = element("button", "on-btn", "Turn on");
-      const offBtn = element("button", "off-btn", "Turn off");
-      onBtn.type = "button";
-      offBtn.type = "button";
-      actions.append(onBtn, offBtn);
       const error = element("p", "card-error");
+      const bms = isBms(device);
+      let onBtn = null;
+      let offBtn = null;
+      let toggleBtn = null;
+      if (bms) {
+        actions.classList.add("bms-switches");
+        const blocks = bmsBlocks(error);
+        toggleBtn = blocks.toggleBtn;
+        actions.append(...blocks.blocks);
+      } else {
+        onBtn = element("button", "on-btn", "Turn on");
+        offBtn = element("button", "off-btn", "Turn off");
+        onBtn.type = "button";
+        offBtn.type = "button";
+        actions.append(onBtn, offBtn);
+      }
       root.append(top, state.status, actions, error);
       grid.append(root);
       const card = {
         id: device.id,
         role: "switch",
-        root, name, address, error, onBtn, offBtn,
+        root, name, address, error, onBtn, offBtn, toggleBtn,
         status: state.status, state: state.state, detail: state.detail,
-        removal, busy: false
+        removal, busy: false, confirming: false, nextOn: true
       };
-      onBtn.addEventListener("click", () => setOutput(card, true, "/api/devices/" + card.id));
-      offBtn.addEventListener("click", () => setOutput(card, false, "/api/devices/" + card.id));
+      if (bms) {
+        toggleBtn.addEventListener("click", () => confirmToggle(card, "/api/devices/" + card.id));
+      } else {
+        onBtn.addEventListener("click", () => setOutput(card, true, "/api/devices/" + card.id));
+        offBtn.addEventListener("click", () => setOutput(card, false, "/api/devices/" + card.id));
+      }
       return card;
     }
 
@@ -508,22 +781,37 @@
       top.append(heading, removal.button);
       const state = statusBlock();
       const actions = element("div", "actions");
-      const onBtn = element("button", "on-btn", "Turn on");
-      const offBtn = element("button", "off-btn", "Turn off");
-      onBtn.type = "button";
-      offBtn.type = "button";
-      actions.append(onBtn, offBtn);
       const error = element("p", "card-error");
+      const bms = isBms(control);
+      let onBtn = null;
+      let offBtn = null;
+      let toggleBtn = null;
+      if (bms) {
+        actions.classList.add("bms-switches");
+        const blocks = bmsBlocks(error);
+        toggleBtn = blocks.toggleBtn;
+        actions.append(...blocks.blocks);
+      } else {
+        onBtn = element("button", "on-btn", "Turn on");
+        offBtn = element("button", "off-btn", "Turn off");
+        onBtn.type = "button";
+        offBtn.type = "button";
+        actions.append(onBtn, offBtn);
+      }
       root.append(top, state.status, actions, error);
       const row = {
         id: control.id,
-        root, name, address, error, onBtn, offBtn,
+        root, name, address, error, onBtn, offBtn, toggleBtn,
         status: state.status, state: state.state, detail: state.detail,
-        removal, busy: false
+        removal, busy: false, confirming: false, nextOn: true
       };
       const prefix = "/api/devices/" + card.id + "/controls/" + control.id;
-      onBtn.addEventListener("click", () => setOutput(row, true, prefix));
-      offBtn.addEventListener("click", () => setOutput(row, false, prefix));
+      if (bms) {
+        toggleBtn.addEventListener("click", () => confirmToggle(row, prefix));
+      } else {
+        onBtn.addEventListener("click", () => setOutput(row, true, prefix));
+        offBtn.addEventListener("click", () => setOutput(row, false, prefix));
+      }
       return row;
     }
 
@@ -611,13 +899,19 @@
         let card = cards.get(device.id);
         if (!card || card.role !== device.role) {
           if (card) card.root.remove();
-          card = device.role === "controller" ? createControllerCard(device) : createSwitchCard(device);
+          if (device.role === "controller") card = createControllerCard(device);
+          else if (device.role === "netio") card = createNetioCard(device);
+          else card = createSwitchCard(device);
           cards.set(device.id, card);
         }
         card.name.textContent = device.name;
         card.address.textContent = addressText(device);
-        paintState(card, device);
-        if (device.role === "controller") paintControls(card, device.controls || []);
+        if (device.role === "netio") {
+          paintNetio(card, device);
+        } else {
+          paintState(card, device);
+          if (device.role === "controller") paintControls(card, device.controls || []);
+        }
       });
       cards.forEach((card, id) => {
         if (seen.has(id)) return;
@@ -645,6 +939,36 @@
         if (version === listVersion && dialog.open) setMessage(error.message, "error");
       } finally {
         refreshing = false;
+      }
+    }
+
+    function confirmToggle(view, prefix) {
+      if (!view.confirming) {
+        view.confirming = true;
+        view.toggleBtn.textContent = view.nextOn ? "Turn wired remote on?" : "Turn wired remote off?";
+        view.toggleBtn.classList.add("confirm");
+        return;
+      }
+      toggleOutput(view, prefix);
+    }
+
+    async function toggleOutput(view, prefix) {
+      view.busy = true;
+      view.confirming = false;
+      view.toggleBtn.disabled = true;
+      view.toggleBtn.classList.remove("confirm");
+      view.error.textContent = "";
+      try {
+        const response = await fetch(prefix + "/" + (view.nextOn ? "on" : "off"), { method: "POST" });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || "Command failed");
+        listVersion += 1;
+        render(await loadDevices());
+      } catch (error) {
+        view.error.textContent = error.message;
+        view.toggleBtn.disabled = false;
+      } finally {
+        view.busy = false;
       }
     }
 
@@ -753,7 +1077,9 @@
         on_path: values.get("on_path") || "",
         off_path: values.get("off_path") || "",
         status_path: values.get("status_path") || "",
-        status_key: values.get("status_key") || ""
+        status_key: values.get("status_key") || "",
+        username: values.get("username") || "",
+        password: values.get("password") || ""
       };
       submit.disabled = true;
       setMessage(type === "shelly" ? "Looking up " + body.host + "…" : "Adding " + (body.name || body.host) + "…");
@@ -789,7 +1115,7 @@
     });
     syncForm();
     refresh();
-    setInterval(refresh, 2000);
+    setInterval(refresh, 1000);
   </script>
 </body>
 </html>
