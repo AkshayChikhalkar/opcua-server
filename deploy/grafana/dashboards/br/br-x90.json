@@ -4,7 +4,8 @@
   "description": "Logbooks from the System Diagnostics Manager, and every PLC variable the X90 publishes over OPC UA.",
   "tags": ["br", "x90"],
   "timezone": "browser",
-  "refresh": "5s",
+  "refresh": "1s",
+  "liveNow": true,
   "schemaVersion": 39,
   "editable": true,
   "time": {"from": "now-6h", "to": "now"},
@@ -68,7 +69,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "celsius",
-          "decimals": 1,
+          "decimals": 3,
           "min": 0,
           "max": 120,
           "thresholds": {
@@ -109,7 +110,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "celsius",
-          "decimals": 1,
+          "decimals": 3,
           "min": 0,
           "max": 120,
           "thresholds": {
@@ -147,7 +148,7 @@
       "title": "Bearing temperature",
       "gridPos": {"x": 0, "y": 12, "w": 24, "h": 8},
       "datasource": {"type": "grafana-postgresql-datasource", "uid": "P40AE60E18F02DE32"},
-      "fieldConfig": {"defaults": {"unit": "celsius", "decimals": 1, "custom": {"drawStyle": "line", "lineWidth": 2, "spanNulls": true, "showPoints": "never"}}},
+      "fieldConfig": {"defaults": {"unit": "celsius", "decimals": 3, "custom": {"drawStyle": "line", "lineWidth": 2, "spanNulls": true, "showPoints": "never"}}},
       "options": {"legend": {"displayMode": "table", "placement": "bottom"}, "tooltip": {"mode": "multi"}},
       "targets": [
         {
