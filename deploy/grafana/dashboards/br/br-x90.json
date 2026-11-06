@@ -1,7 +1,7 @@
 {
   "uid": "br-x90",
   "title": "B&R X90",
-  "description": "Logbooks from the System Diagnostics Manager, and every PLC variable the X90 publishes over OPC UA.",
+  "description": "Bearing temperatures from the X90, plus the diagnostic logbooks.",
   "tags": ["br", "x90"],
   "timezone": "browser",
   "refresh": "1s",
@@ -11,73 +11,25 @@
   "time": {"from": "now-6h", "to": "now"},
   "panels": [
     {
-      "id": 1,
-      "type": "stat",
-      "title": "Logbooks",
-      "gridPos": {"x": 0, "y": 8, "w": 12, "h": 4},
-      "datasource": {"type": "grafana-postgresql-datasource", "uid": "P40AE60E18F02DE32"},
-      "fieldConfig": {
-        "defaults": {
-          "mappings": [
-            {"type": "value", "options": {"0": {"text": "Offline", "color": "red"}, "1": {"text": "Live", "color": "green"}}}
-          ],
-          "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "green", "value": 1}]}
-        }
-      },
-      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "background", "graphMode": "none", "textMode": "value"},
-      "targets": [
-        {
-          "refId": "A",
-          "datasource": {"type": "grafana-postgresql-datasource", "uid": "P40AE60E18F02DE32"},
-          "format": "table",
-          "rawQuery": true,
-          "rawSql": "SELECT CASE WHEN EXISTS (SELECT 1 FROM recorder_status rs JOIN controllers c ON c.id = rs.controller_id WHERE c.endpoint LIKE 'sdm://%' AND rs.listening AND rs.last_seen > now() - interval '45 seconds') THEN 1 ELSE 0 END AS \"Recorder\""
-        }
-      ]
-    },
-    {
-      "id": 3,
-      "type": "stat",
-      "title": "Values",
-      "gridPos": {"x": 12, "y": 8, "w": 12, "h": 4},
-      "datasource": {"type": "grafana-postgresql-datasource", "uid": "P40AE60E18F02DE32"},
-      "fieldConfig": {
-        "defaults": {
-          "mappings": [
-            {"type": "value", "options": {"0": {"text": "Offline", "color": "red"}, "1": {"text": "Live", "color": "green"}}}
-          ],
-          "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "green", "value": 1}]}
-        }
-      },
-      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "background", "graphMode": "none", "textMode": "value"},
-      "targets": [
-        {
-          "refId": "A",
-          "datasource": {"type": "grafana-postgresql-datasource", "uid": "P40AE60E18F02DE32"},
-          "format": "table",
-          "rawQuery": true,
-          "rawSql": "SELECT CASE WHEN EXISTS (SELECT 1 FROM recorder_status rs JOIN controllers c ON c.id = rs.controller_id WHERE c.name = 'B&R X90' AND c.endpoint LIKE 'opc.tcp://%' AND rs.listening AND rs.last_seen > now() - interval '45 seconds') THEN 1 ELSE 0 END AS \"Values\""
-        }
-      ]
-    },
-    {
       "id": 4,
       "type": "gauge",
-      "title": "Bearing temp front",
-      "gridPos": {"x": 0, "y": 0, "w": 12, "h": 8},
+      "title": "Front bearing",
+      "gridPos": {"x": 0, "y": 0, "w": 12, "h": 10},
       "datasource": {"type": "grafana-postgresql-datasource", "uid": "P40AE60E18F02DE32"},
       "fieldConfig": {
         "defaults": {
           "unit": "celsius",
           "decimals": 3,
           "min": 0,
-          "max": 120,
+          "max": 100,
+          "color": {"mode": "continuous-GrYlRd"},
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              {"color": "green", "value": null},
-              {"color": "yellow", "value": 70},
-              {"color": "red", "value": 90}
+              {"color": "#73BF69", "value": null},
+              {"color": "#FADE2A", "value": 60},
+              {"color": "#FF9830", "value": 75},
+              {"color": "#F2495C", "value": 90}
             ]
           }
         }
@@ -104,21 +56,23 @@
     {
       "id": 5,
       "type": "gauge",
-      "title": "Bearing temp rear",
-      "gridPos": {"x": 12, "y": 0, "w": 12, "h": 8},
+      "title": "Rear bearing",
+      "gridPos": {"x": 12, "y": 0, "w": 12, "h": 10},
       "datasource": {"type": "grafana-postgresql-datasource", "uid": "P40AE60E18F02DE32"},
       "fieldConfig": {
         "defaults": {
           "unit": "celsius",
           "decimals": 3,
           "min": 0,
-          "max": 120,
+          "max": 100,
+          "color": {"mode": "continuous-GrYlRd"},
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              {"color": "green", "value": null},
-              {"color": "yellow", "value": 70},
-              {"color": "red", "value": 90}
+              {"color": "#73BF69", "value": null},
+              {"color": "#FADE2A", "value": 60},
+              {"color": "#FF9830", "value": 75},
+              {"color": "#F2495C", "value": 90}
             ]
           }
         }
@@ -143,13 +97,92 @@
       ]
     },
     {
+      "id": 1,
+      "type": "stat",
+      "title": "Logbooks",
+      "gridPos": {"x": 0, "y": 10, "w": 12, "h": 3},
+      "datasource": {"type": "grafana-postgresql-datasource", "uid": "P40AE60E18F02DE32"},
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            {"type": "value", "options": {"0": {"text": "Offline", "color": "red"}, "1": {"text": "Live", "color": "green"}}}
+          ],
+          "thresholds": {"mode": "absolute", "steps": [{"color": "#F2495C", "value": null}, {"color": "#73BF69", "value": 1}]}
+        }
+      },
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "background", "graphMode": "none", "textMode": "value", "justifyMode": "center"},
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {"type": "grafana-postgresql-datasource", "uid": "P40AE60E18F02DE32"},
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT CASE WHEN EXISTS (SELECT 1 FROM recorder_status rs JOIN controllers c ON c.id = rs.controller_id WHERE c.endpoint LIKE 'sdm://%' AND rs.listening AND rs.last_seen > now() - interval '45 seconds') THEN 1 ELSE 0 END AS \"Recorder\""
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Values",
+      "gridPos": {"x": 12, "y": 10, "w": 12, "h": 3},
+      "datasource": {"type": "grafana-postgresql-datasource", "uid": "P40AE60E18F02DE32"},
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            {"type": "value", "options": {"0": {"text": "Offline", "color": "red"}, "1": {"text": "Live", "color": "green"}}}
+          ],
+          "thresholds": {"mode": "absolute", "steps": [{"color": "#F2495C", "value": null}, {"color": "#73BF69", "value": 1}]}
+        }
+      },
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "background", "graphMode": "none", "textMode": "value", "justifyMode": "center"},
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {"type": "grafana-postgresql-datasource", "uid": "P40AE60E18F02DE32"},
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT CASE WHEN EXISTS (SELECT 1 FROM recorder_status rs JOIN controllers c ON c.id = rs.controller_id WHERE c.name = 'B&R X90' AND c.endpoint LIKE 'opc.tcp://%' AND rs.listening AND rs.last_seen > now() - interval '45 seconds') THEN 1 ELSE 0 END AS \"Values\""
+        }
+      ]
+    },
+    {
       "id": 6,
       "type": "timeseries",
       "title": "Bearing temperature",
-      "gridPos": {"x": 0, "y": 12, "w": 24, "h": 8},
+      "gridPos": {"x": 0, "y": 13, "w": 24, "h": 9},
       "datasource": {"type": "grafana-postgresql-datasource", "uid": "P40AE60E18F02DE32"},
-      "fieldConfig": {"defaults": {"unit": "celsius", "decimals": 3, "custom": {"drawStyle": "line", "lineWidth": 2, "spanNulls": true, "showPoints": "never"}}},
-      "options": {"legend": {"displayMode": "table", "placement": "bottom"}, "tooltip": {"mode": "multi"}},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "celsius",
+          "decimals": 3,
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "fillOpacity": 18,
+            "gradientMode": "opacity",
+            "spanNulls": true,
+            "showPoints": "never",
+            "axisSoftMin": 20,
+            "axisSoftMax": 70
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {"id": "byName", "options": "Front"},
+            "properties": [{"id": "color", "value": {"fixedColor": "#5794F2", "mode": "fixed"}}]
+          },
+          {
+            "matcher": {"id": "byName", "options": "Rear"},
+            "properties": [{"id": "color", "value": {"fixedColor": "#FF9830", "mode": "fixed"}}]
+          }
+        ]
+      },
+      "options": {
+        "legend": {"displayMode": "list", "placement": "bottom", "showLegend": true, "calcs": ["lastNotNull", "min", "max"]},
+        "tooltip": {"mode": "multi", "sort": "desc"}
+      },
       "targets": [
         {
           "refId": "A",
@@ -161,36 +194,68 @@
       ]
     },
     {
-      "id": 7,
-      "type": "table",
-      "title": "Latest values",
-      "gridPos": {"x": 0, "y": 20, "w": 24, "h": 8},
-      "datasource": {"type": "grafana-postgresql-datasource", "uid": "P40AE60E18F02DE32"},
-      "options": {"showHeader": true, "cellHeight": "sm", "footer": {"show": false, "reducer": ["sum"], "countRows": false}},
-      "targets": [
+      "id": 8,
+      "type": "row",
+      "title": "All signals",
+      "collapsed": true,
+      "gridPos": {"x": 0, "y": 22, "w": 24, "h": 1},
+      "panels": [
         {
-          "refId": "A",
+          "id": 7,
+          "type": "table",
+          "title": "Latest values",
+          "gridPos": {"x": 0, "y": 23, "w": 24, "h": 8},
           "datasource": {"type": "grafana-postgresql-datasource", "uid": "P40AE60E18F02DE32"},
-          "format": "table",
-          "rawQuery": true,
-          "rawSql": "SELECT s.name AS \"Signal\", l.time AS \"Time\", l.value_num AS \"Value\", l.value_text AS \"Text\" FROM latest l JOIN signals s ON s.id = l.signal_id JOIN controllers c ON c.id = s.controller_id WHERE c.name = 'B&R X90' AND c.endpoint LIKE 'opc.tcp://%' ORDER BY s.name"
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": [
+              {"matcher": {"id": "byName", "options": "Time"}, "properties": [{"id": "unit", "value": "dateTimeFromNow"}]},
+              {"matcher": {"id": "byName", "options": "Value"}, "properties": [{"id": "decimals", "value": 3}]}
+            ]
+          },
+          "options": {"showHeader": true, "cellHeight": "sm", "footer": {"show": false, "reducer": ["sum"], "countRows": false}},
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {"type": "grafana-postgresql-datasource", "uid": "P40AE60E18F02DE32"},
+              "format": "table",
+              "rawQuery": true,
+              "rawSql": "SELECT regexp_replace(s.name, '^.*/', '') AS \"Signal\", l.time AS \"Time\", l.value_num AS \"Value\", l.value_text AS \"Text\" FROM latest l JOIN signals s ON s.id = l.signal_id JOIN controllers c ON c.id = s.controller_id WHERE c.name = 'B&R X90' AND c.endpoint LIKE 'opc.tcp://%' ORDER BY s.name"
+            }
+          ]
         }
       ]
     },
     {
-      "id": 2,
-      "type": "table",
+      "id": 9,
+      "type": "row",
       "title": "Logbook",
-      "gridPos": {"x": 0, "y": 28, "w": 24, "h": 12},
-      "datasource": {"type": "grafana-postgresql-datasource", "uid": "P40AE60E18F02DE32"},
-      "options": {"showHeader": true, "cellHeight": "sm", "footer": {"show": false, "reducer": ["sum"], "countRows": false}},
-      "targets": [
+      "collapsed": true,
+      "gridPos": {"x": 0, "y": 23, "w": 24, "h": 1},
+      "panels": [
         {
-          "refId": "A",
+          "id": 2,
+          "type": "table",
+          "title": "Logbook",
+          "gridPos": {"x": 0, "y": 24, "w": 24, "h": 12},
           "datasource": {"type": "grafana-postgresql-datasource", "uid": "P40AE60E18F02DE32"},
-          "format": "table",
-          "rawQuery": true,
-          "rawSql": "SELECT sa.received_at AS \"time\", sa.time AS \"PLC time\", s.name AS \"Book\", sa.value_num AS \"Level\", sa.status AS \"Code\", sa.value_text AS \"Message\" FROM samples sa JOIN signals s ON s.id = sa.signal_id JOIN controllers c ON c.id = s.controller_id WHERE c.endpoint LIKE 'sdm://%' AND $__timeFilter(sa.received_at) ORDER BY sa.received_at DESC"
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": [
+              {"matcher": {"id": "byName", "options": "time"}, "properties": [{"id": "unit", "value": "dateTimeFromNow"}]},
+              {"matcher": {"id": "byName", "options": "PLC time"}, "properties": [{"id": "unit", "value": "dateTimeAsIso"}]}
+            ]
+          },
+          "options": {"showHeader": true, "cellHeight": "sm", "footer": {"show": false, "reducer": ["sum"], "countRows": false}},
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {"type": "grafana-postgresql-datasource", "uid": "P40AE60E18F02DE32"},
+              "format": "table",
+              "rawQuery": true,
+              "rawSql": "SELECT sa.received_at AS \"time\", sa.time AS \"PLC time\", s.name AS \"Book\", sa.value_num AS \"Level\", sa.status AS \"Code\", sa.value_text AS \"Message\" FROM samples sa JOIN signals s ON s.id = sa.signal_id JOIN controllers c ON c.id = s.controller_id WHERE c.endpoint LIKE 'sdm://%' AND $__timeFilter(sa.received_at) ORDER BY sa.received_at DESC"
+            }
+          ]
         }
       ]
     }
