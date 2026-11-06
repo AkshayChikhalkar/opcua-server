@@ -1,18 +1,20 @@
-"""Record Lynx Smart BMS instant-readout values via the Shelly Pro 1.
+"""Record Lynx Smart BMS instant-readout values.
 
-The Shelly sits near the BMS, hears its Bluetooth broadcast, and the
-recorder on this PC polls that broadcast over Wi-Fi. Copy
-lynx.local.example.json to lynx.local.json and paste the advertisement
+The BMS broadcasts over Bluetooth. This recorder listens with the Bluetooth
+radio on the PC it is running on. If that radio is missing, it falls back to
+the Shelly Pro 1, which hears the same broadcast and serves it over Wi-Fi.
+Copy lynx.local.example.json to lynx.local.json and paste the advertisement
 key from VictronConnect before decoded values are stored.
 
-  python lynx_recorder.py --install
   python lynx_recorder.py --discover
   python lynx_recorder.py
+  python lynx_recorder.py --install
 """
 
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
 import os
 import struct
@@ -24,6 +26,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import psycopg
+from bleak import BleakScanner
+from bleak.exc import BleakError
 from victron_ble.devices import detect_device_type
 from victron_ble.exceptions import AdvertisementKeyMismatchError
 
@@ -78,17 +82,29 @@ def normalise_mac(value: str) -> str:
     return ":".join(hex_chars[index : index + 2] for index in range(0, 12, 2))
 
 
+class BluetoothUnavailable(Exception):
+    pass
+
+
 def load_config() -> dict:
     if not CONFIG_PATH.is_file():
-        return {"shelly": DEFAULT_SHELLY, "interval_seconds": 5, "devices": {}}
+        return {"source": "auto", "shelly": DEFAULT_SHELLY, "interval_seconds": 5, "devices": {}}
     config = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
     devices = {}
     for mac, item in config.get("devices", {}).items():
         devices[normalise_mac(mac)] = item
     config["devices"] = devices
+    config.setdefault("source", "auto")
     config.setdefault("shelly", DEFAULT_SHELLY)
     config.setdefault("interval_seconds", 5)
     return config
+
+
+def source_name(config: dict) -> str:
+    source = str(config.get("source") or "auto").strip().lower()
+    if source not in ("auto", "bluetooth", "shelly"):
+        raise SystemExit("source in lynx.local.json must be auto, bluetooth, or shelly")
+    return source
 
 
 def rpc(shelly: str, method: str, params: dict | None = None, timeout: float = 8) -> dict:
@@ -357,6 +373,43 @@ def print_sighting(mac: str, item: dict, note: str) -> None:
     print("%s  %s  rssi %s  %s" % (normalise_mac(mac), name, rssi, note))
 
 
+def ingest(config: dict, store: Store | None, mac: str, item: dict) -> int:
+    try:
+        raw = payload_bytes(item.get("hex") or "")
+    except ValueError:
+        print_sighting(mac, item, "unreadable packet")
+        return 0
+    summary = describe(raw)
+    settings = device_settings(config, mac)
+    key = real_key(settings)
+    if key is None:
+        print_sighting(mac, item, summary + " — advertisement key missing")
+        return 0
+    try:
+        parsed = decode(raw, key)
+    except AdvertisementKeyMismatchError:
+        print_sighting(mac, item, summary + " — advertisement key does not match")
+        return 0
+    except Exception as exc:
+        print_sighting(mac, item, summary + " — %s" % exc)
+        return 0
+    values = numeric_fields(parsed)
+    name = (settings or {}).get("name") or item.get("name") or parsed.get_model_name()
+    endpoint = "ble://" + normalise_mac(mac)
+    if store is not None:
+        store.write(endpoint, name, values, item.get("rssi"))
+    readable = ", ".join("%s=%s" % (field, values[field]) for field in sorted(values))
+    print_sighting(mac, item, readable)
+    return 1 if store is not None else 0
+
+
+def ingest_all(config: dict, store: Store | None, devices: dict) -> int:
+    if not devices:
+        print("No Victron broadcast yet. Instant Readout has to be on, and the radio has to be near the Lynx.")
+        return 0
+    return sum(ingest(config, store, mac, item) for mac, item in devices.items())
+
+
 def poll_once(config: dict, store: Store | None, script_id: int) -> int:
     shelly = config["shelly"]
     try:
@@ -375,39 +428,64 @@ def poll_once(config: dict, store: Store | None, script_id: int) -> int:
             % report.get("scans", 0)
         )
         return 0
-    written = 0
-    for mac, item in devices.items():
-        try:
-            raw = payload_bytes(item.get("hex") or "")
-        except ValueError:
-            print_sighting(mac, item, "unreadable packet")
-            continue
-        summary = describe(raw)
-        settings = device_settings(config, mac)
-        key = real_key(settings)
-        if key is None:
-            print_sighting(mac, item, summary + " — advertisement key missing")
-            continue
-        try:
-            parsed = decode(raw, key)
-        except AdvertisementKeyMismatchError:
-            print_sighting(mac, item, summary + " — advertisement key does not match")
-            continue
-        except Exception as exc:
-            print_sighting(mac, item, summary + " — %s" % exc)
-            continue
-        values = numeric_fields(parsed)
-        name = (settings or {}).get("name") or item.get("name") or parsed.get_model_name()
-        endpoint = "ble://" + normalise_mac(mac)
-        if store is not None:
-            store.write(endpoint, name, values, item.get("rssi"))
-            written += 1
-        readable = ", ".join("%s=%s" % (field, values[field]) for field in sorted(values))
-        print_sighting(mac, item, readable)
-    return written
+    return ingest_all(config, store, devices)
+
+
+def broadcast_from(device, advertisement) -> tuple[str, dict] | None:
+    data = advertisement.manufacturer_data.get(0x02E1)
+    if not data or not data.startswith(b"\x10"):
+        return None
+    return device.address.lower(), {
+        "name": device.name,
+        "rssi": advertisement.rssi,
+        "hex": bytes(data).hex(),
+    }
+
+
+async def listen(seconds: float, on_update) -> None:
+    def on_detect(device, advertisement) -> None:
+        found = broadcast_from(device, advertisement)
+        if found is not None:
+            on_update(*found)
+
+    scanner = BleakScanner(detection_callback=on_detect)
+    try:
+        await scanner.start()
+    except (BleakError, OSError, TimeoutError) as exc:
+        raise BluetoothUnavailable(str(exc)) from exc
+    try:
+        await asyncio.sleep(seconds)
+    finally:
+        await scanner.stop()
+
+
+def collect_broadcasts(seconds: float) -> dict[str, dict]:
+    found: dict[str, dict] = {}
+
+    def on_update(mac: str, item: dict) -> None:
+        found[mac] = item
+
+    asyncio.run(listen(seconds, on_update))
+    return found
+
+
+def discover_bluetooth(seconds: float, config: dict) -> None:
+    print("Listening on the local Bluetooth radio for %.0fs." % seconds)
+    devices = collect_broadcasts(max(seconds, 1))
+    print("devices=%s" % len(devices))
+    ingest_all(config, None, devices)
 
 
 def discover(config: dict, seconds: float) -> None:
+    source = source_name(config)
+    if source != "shelly":
+        try:
+            discover_bluetooth(seconds, config)
+            return
+        except BluetoothUnavailable as exc:
+            if source == "bluetooth":
+                raise SystemExit("The local Bluetooth radio did not start: %s" % exc)
+            print("Local Bluetooth is not available (%s). Using the Shelly." % exc)
     shelly = config["shelly"]
     script_id = script_id_for(shelly)
     if script_id is None:
@@ -438,7 +516,48 @@ def discover(config: dict, seconds: float) -> None:
         time.sleep(2)
 
 
+async def record_bluetooth(config: dict, store: Store) -> None:
+    interval = float(config.get("interval_seconds") or 5)
+    latest: dict[str, dict] = {}
+    print("Recording Lynx broadcasts from the local Bluetooth radio every %.0fs. Ctrl+C stops." % interval)
+
+    def on_detect(device, advertisement) -> None:
+        found = broadcast_from(device, advertisement)
+        if found is not None:
+            latest[found[0]] = found[1]
+
+    scanner = BleakScanner(detection_callback=on_detect)
+    try:
+        await scanner.start()
+    except (BleakError, OSError, TimeoutError) as exc:
+        raise BluetoothUnavailable(str(exc)) from exc
+    try:
+        while True:
+            ingest_all(config, store, dict(latest))
+            await asyncio.sleep(interval)
+    finally:
+        await scanner.stop()
+        store.mark_offline()
+        store.close()
+
+
 def record(config: dict) -> None:
+    source = source_name(config)
+    if source != "shelly":
+        store = None
+        try:
+            store = Store.connect()
+            asyncio.run(record_bluetooth(config, store))
+            return
+        except BluetoothUnavailable as exc:
+            if store is not None:
+                store.close()
+            if source == "bluetooth":
+                raise SystemExit("The local Bluetooth radio did not start: %s" % exc)
+            print("Local Bluetooth is not available (%s). Using the Shelly." % exc)
+        except KeyboardInterrupt:
+            print()
+            return
     shelly = config["shelly"]
     script_id = script_id_for(shelly)
     if script_id is None:
@@ -458,7 +577,7 @@ def record(config: dict) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Record Lynx Smart BMS values via a Shelly Bluetooth scan.")
+    parser = argparse.ArgumentParser(description="Record Lynx Smart BMS values from Bluetooth.")
     parser.add_argument("--install", action="store_true", help="Upload the scan script and enable Bluetooth")
     parser.add_argument("--restart-shelly", action="store_true", help="Restart the Shelly so Bluetooth starts")
     parser.add_argument("--discover", action="store_true", help="Print nearby Victron broadcasts and exit")
