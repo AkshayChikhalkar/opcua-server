@@ -4,7 +4,10 @@ services:
     build: .
     restart: unless-stopped
     env_file: .env
-    network_mode: host
+    environment:
+      POSTGRES_HOST: host.docker.internal
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - ./ecu.local.json:/app/ecu.local.json:ro
       - ./lynx.local.json:/app/lynx.local.json:ro
