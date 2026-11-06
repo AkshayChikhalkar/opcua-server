@@ -1,0 +1,14 @@
+.venv
+__pycache__
+**/__pycache__
+.git
+certs
+recordings
+.env
+ecu.local.json
+lynx.local.json
+br.local.json
+shelly/devices.json
+*.pem
+*.der
+tetmp

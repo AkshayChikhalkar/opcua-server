@@ -1,0 +1,14 @@
+services:
+  recorders:
+    image: opcua-recorders:latest
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    network_mode: host
+    volumes:
+      - ./ecu.local.json:/app/ecu.local.json:ro
+      - ./lynx.local.json:/app/lynx.local.json:ro
+      - recorder_certs:/app/certs
+
+volumes:
+  recorder_certs:
