@@ -1,9 +1,9 @@
-"""Record B&R X90 logbooks from the System Diagnostics Manager.
+"""Record a B&R X90: diagnostic logbooks and every published PLC variable.
 
-The CPU that answers on this network is 192.168.1.12. Its OPC UA server is
-not running, so process variables cannot be subscribed yet. The diagnostics
-page already publishes the logbooks over HTTP, and this recorder stores the
-new lines in the same Timescale database as the other controllers.
+The CPU on this network is 192.168.1.12. Logbooks come from the System
+Diagnostics Manager over HTTP. Live values come from its OPC UA server.
+The project decides which variables that server publishes; this recorder
+subscribes to all of them and stores new values in Timescale.
 
   python br_recorder.py
   python br_recorder.py --once
@@ -12,21 +12,29 @@ new lines in the same Timescale database as the other controllers.
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
 import os
+import threading
 import time
 import urllib.error
 import urllib.request
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import quote
 
 import psycopg
+from asyncua import Client, ua
+from asyncua.common.node import Node
 
 ROOT = Path(__file__).resolve().parent
 CONFIG_PATH = ROOT / "br.local.json"
 DEFAULT_HOST = "192.168.1.12"
 CONTROLLER_NAME = "B&R X90"
+OPC_PORT = 4840
+# OPC UA built-in scalar data types. Structures are skipped.
+SCALAR_TYPES = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 19, 21}
+PLC_ROOTS = ("ns=4;i=20000", "ns=4;i=21001")
 
 BOOK_NAMES = {
     "$accsec": "Access log",
@@ -258,6 +266,278 @@ class Store:
             )
 
 
+def split_sample_value(value) -> tuple[float | None, str | None]:
+    if value is None:
+        return None, None
+    if isinstance(value, bool):
+        return float(value), None
+    if isinstance(value, (int, float)):
+        return float(value), None
+    text = getattr(value, "Text", None)
+    if isinstance(text, str):
+        return None, text or None
+    if isinstance(value, str):
+        return None, value or None
+    return None, str(value)
+
+
+class ValueStore:
+    """Writes OPC UA values for the same CPU, on their own database connection."""
+
+    def __init__(self, connection: psycopg.Connection, endpoint: str) -> None:
+        self.connection = connection
+        self.endpoint = endpoint
+        self.controller_id: int | None = None
+        self.signals: dict[str, int] = {}
+        self.last: dict[str, tuple] = {}
+        self.lock = threading.Lock()
+
+    @classmethod
+    def connect(cls, endpoint: str) -> "ValueStore":
+        load_env_file()
+        connection = psycopg.connect(
+            host=os.environ.get("POSTGRES_HOST", "127.0.0.1"),
+            port=int(os.environ.get("POSTGRES_PORT", "5432")),
+            user=os.environ.get("POSTGRES_USER", "recorder"),
+            password=os.environ["POSTGRES_PASSWORD"],
+            dbname=os.environ.get("POSTGRES_DB", "recorder"),
+            autocommit=True,
+        )
+        return cls(connection, endpoint)
+
+    def close(self) -> None:
+        self.connection.close()
+
+    def register(self, variables: list[tuple[Node, str]]) -> None:
+        with self.lock:
+            with self.connection.cursor() as cur:
+                if self.controller_id is None:
+                    cur.execute(
+                        """
+                        INSERT INTO controllers (name, endpoint)
+                        VALUES (%s, %s)
+                        ON CONFLICT (endpoint) DO UPDATE SET name = EXCLUDED.name
+                        RETURNING id
+                        """,
+                        (CONTROLLER_NAME, self.endpoint),
+                    )
+                    self.controller_id = cur.fetchone()[0]
+                for node, name in variables:
+                    key = node.nodeid.to_string()
+                    if key in self.signals:
+                        continue
+                    cur.execute(
+                        """
+                        INSERT INTO signals (controller_id, namespace, identifier, name)
+                        VALUES (%s, %s, %s, %s)
+                        ON CONFLICT (controller_id, namespace, identifier)
+                        DO UPDATE SET name = EXCLUDED.name
+                        RETURNING id
+                        """,
+                        (self.controller_id, node.nodeid.NamespaceIndex, str(node.nodeid.Identifier), name),
+                    )
+                    self.signals[key] = cur.fetchone()[0]
+
+    def write(self, node_id: str, when, value, status: str | None) -> None:
+        signal_id = self.signals.get(node_id)
+        if signal_id is None:
+            return
+        value_num, value_text = split_sample_value(value)
+        if value_num is None and not value_text:
+            return
+        current = (value_num, value_text)
+        if self.last.get(node_id) == current:
+            return
+        if when is None:
+            when = datetime.now(timezone.utc)
+        with self.lock:
+            with self.connection.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO samples (time, received_at, signal_id, value_num, value_text, status)
+                    VALUES (%s, now(), %s, %s, %s, %s)
+                    """,
+                    (when, signal_id, value_num, value_text, status),
+                )
+                cur.execute(
+                    """
+                    INSERT INTO latest (signal_id, time, value_num, value_text, status)
+                    VALUES (%s, %s, %s, %s, %s)
+                    ON CONFLICT (signal_id) DO UPDATE SET
+                        time = EXCLUDED.time,
+                        value_num = EXCLUDED.value_num,
+                        value_text = EXCLUDED.value_text,
+                        status = EXCLUDED.status
+                    WHERE latest.time <= EXCLUDED.time
+                    """,
+                    (signal_id, when, value_num, value_text, status),
+                )
+                cur.execute(
+                    """
+                    INSERT INTO recorder_status (controller_id, last_seen, listening)
+                    VALUES (%s, now(), true)
+                    ON CONFLICT (controller_id) DO UPDATE
+                    SET last_seen = now(), listening = true
+                    """,
+                    (self.controller_id,),
+                )
+        self.last[node_id] = current
+
+    def touch(self) -> None:
+        if self.controller_id is None:
+            return
+        with self.lock:
+            with self.connection.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO recorder_status (controller_id, last_seen, listening)
+                    VALUES (%s, now(), true)
+                    ON CONFLICT (controller_id) DO UPDATE
+                    SET last_seen = now(), listening = true
+                    """,
+                    (self.controller_id,),
+                )
+
+    def mark_offline(self) -> None:
+        if self.controller_id is None:
+            return
+        with self.lock:
+            with self.connection.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE recorder_status
+                    SET listening = false, last_seen = now()
+                    WHERE controller_id = %s
+                    """,
+                    (self.controller_id,),
+                )
+
+
+class ValueHandler:
+    def __init__(self, store: ValueStore) -> None:
+        self.store = store
+
+    def datachange_notification(self, node: Node, val, data) -> None:
+        when = None
+        status = None
+        try:
+            value = data.monitored_item.Value
+            when = value.SourceTimestamp
+            if value.StatusCode is not None:
+                status = value.StatusCode.name
+        except Exception:
+            pass
+        try:
+            self.store.write(node.nodeid.to_string(), when, val, status)
+        except Exception as exc:
+            print("OPC UA write failed: %s" % exc)
+
+    def status_change_notification(self, status) -> None:
+        return None
+
+
+async def plc_variables(client: Client) -> list[tuple[Node, str]]:
+    """Every scalar the PLC actually publishes, from both address-space views."""
+    found: list[tuple[Node, str]] = []
+    seen: set[str] = set()
+
+    async def walk(node: Node, prefix: str, depth: int) -> None:
+        if depth > 8:
+            return
+        try:
+            children = await node.get_children()
+        except Exception:
+            return
+        for child in children:
+            key = child.nodeid.to_string()
+            if key in seen:
+                continue
+            seen.add(key)
+            try:
+                browse_name = (await child.read_browse_name()).Name
+                node_class = await child.read_node_class()
+            except Exception:
+                continue
+            label = "%s/%s" % (prefix, browse_name) if prefix else browse_name
+            if node_class == ua.NodeClass.Variable:
+                try:
+                    data_type = await child.read_data_type()
+                except Exception:
+                    continue
+                identifier = data_type.Identifier
+                if data_type.NamespaceIndex == 0 and isinstance(identifier, int) and identifier in SCALAR_TYPES:
+                    found.append((child, label))
+            elif node_class == ua.NodeClass.Object:
+                await walk(child, label, depth + 1)
+
+    for root_id in PLC_ROOTS:
+        root = client.get_node(root_id)
+        await walk(root, "", 0)
+    return found
+
+
+async def watch_values(host: str, stop: threading.Event) -> None:
+    endpoint = "opc.tcp://%s:%d" % (host, OPC_PORT)
+    try:
+        store = ValueStore.connect(endpoint)
+    except Exception as exc:
+        print("OPC UA database did not answer: %s" % exc)
+        return
+    try:
+        while not stop.is_set():
+            client = Client(endpoint, timeout=10)
+            subscription = None
+            subscribed: set[str] = set()
+            try:
+                await client.connect()
+                print("OPC UA %s: connected." % endpoint)
+                while not stop.is_set():
+                    variables = await plc_variables(client)
+                    keys = {node.nodeid.to_string() for node, _name in variables}
+                    if keys != subscribed:
+                        if subscription is not None:
+                            await subscription.delete()
+                            subscription = None
+                        store.register(variables)
+                        if variables:
+                            params = ua.CreateSubscriptionParameters()
+                            params.RequestedPublishingInterval = 1000
+                            params.RequestedMaxKeepAliveCount = 1200
+                            params.RequestedLifetimeCount = 3600
+                            params.MaxNotificationsPerPublish = 100
+                            params.PublishingEnabled = True
+                            params.Priority = 0
+                            subscription = await client.create_subscription(params, ValueHandler(store))
+                            await subscription.subscribe_data_change(
+                                [node for node, _name in variables],
+                                sampling_interval=1000,
+                            )
+                        print(
+                            "OPC UA %s: recording %d variable(s): %s"
+                            % (endpoint, len(variables), ", ".join(name for _node, name in variables))
+                        )
+                        subscribed = keys
+                    store.touch()
+                    for _ in range(30):
+                        if stop.is_set():
+                            break
+                        await asyncio.sleep(1)
+            except Exception as exc:
+                print("OPC UA did not answer: %s" % exc)
+                for _ in range(15):
+                    if stop.is_set():
+                        break
+                    await asyncio.sleep(1)
+            finally:
+                try:
+                    await client.disconnect()
+                except Exception:
+                    pass
+    finally:
+        store.mark_offline()
+        store.close()
+
+
 def books_in(text: str) -> list[str]:
     names = []
     for parts in js_arrays(text, "getIT1"):
@@ -299,14 +579,20 @@ def poll_once(host: str, store: Store) -> int:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Record B&R X90 logbooks.")
+    parser = argparse.ArgumentParser(description="Record B&R X90 logbooks and OPC UA values.")
     parser.add_argument("--once", action="store_true", help="Read the logbooks once and exit.")
     args = parser.parse_args()
     config = load_config()
     host = str(config.get("host") or DEFAULT_HOST).strip()
     interval = float(config.get("interval_seconds") or 15)
     store = Store.connect()
+    stop = threading.Event()
+    opc = threading.Thread(target=lambda: asyncio.run(watch_values(host, stop)), name="br-opc", daemon=True)
+    if not args.once:
+        opc.start()
     print("Recording B&R logbooks from http://%s/sdm every %.0fs." % (host, interval))
+    if not args.once:
+        print("Recording B&R values from opc.tcp://%s:%d." % (host, OPC_PORT))
     try:
         if args.once:
             print("Stored %s new log line(s)." % poll_once(host, store))
@@ -323,6 +609,9 @@ def main() -> None:
     except KeyboardInterrupt:
         print("Stopped.")
     finally:
+        stop.set()
+        if opc.is_alive():
+            opc.join(timeout=12)
         store.mark_offline()
         store.close()
 
