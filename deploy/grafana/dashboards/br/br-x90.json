@@ -22,14 +22,13 @@
           "decimals": 3,
           "min": 0,
           "max": 100,
-          "color": {"mode": "continuous-GrYlRd"},
+          "color": {"mode": "thresholds"},
           "thresholds": {
             "mode": "absolute",
             "steps": [
               {"color": "#73BF69", "value": null},
-              {"color": "#FADE2A", "value": 60},
-              {"color": "#FF9830", "value": 75},
-              {"color": "#F2495C", "value": 90}
+              {"color": "#FADE2A", "value": 55},
+              {"color": "#F2495C", "value": 65}
             ]
           }
         }
@@ -65,14 +64,13 @@
           "decimals": 3,
           "min": 0,
           "max": 100,
-          "color": {"mode": "continuous-GrYlRd"},
+          "color": {"mode": "thresholds"},
           "thresholds": {
             "mode": "absolute",
             "steps": [
               {"color": "#73BF69", "value": null},
-              {"color": "#FADE2A", "value": 60},
-              {"color": "#FF9830", "value": 75},
-              {"color": "#F2495C", "value": 90}
+              {"color": "#FADE2A", "value": 55},
+              {"color": "#F2495C", "value": 65}
             ]
           }
         }
