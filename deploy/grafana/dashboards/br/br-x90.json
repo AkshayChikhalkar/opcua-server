@@ -13,7 +13,7 @@
       "id": 1,
       "type": "stat",
       "title": "Logbooks",
-      "gridPos": {"x": 0, "y": 0, "w": 4, "h": 4},
+      "gridPos": {"x": 0, "y": 8, "w": 12, "h": 4},
       "datasource": {"type": "grafana-postgresql-datasource", "uid": "P40AE60E18F02DE32"},
       "fieldConfig": {
         "defaults": {
@@ -38,7 +38,7 @@
       "id": 3,
       "type": "stat",
       "title": "Values",
-      "gridPos": {"x": 4, "y": 0, "w": 4, "h": 4},
+      "gridPos": {"x": 12, "y": 8, "w": 12, "h": 4},
       "datasource": {"type": "grafana-postgresql-datasource", "uid": "P40AE60E18F02DE32"},
       "fieldConfig": {
         "defaults": {
@@ -63,7 +63,7 @@
       "id": 4,
       "type": "gauge",
       "title": "Bearing temp front",
-      "gridPos": {"x": 0, "y": 4, "w": 12, "h": 8},
+      "gridPos": {"x": 0, "y": 0, "w": 12, "h": 8},
       "datasource": {"type": "grafana-postgresql-datasource", "uid": "P40AE60E18F02DE32"},
       "fieldConfig": {
         "defaults": {
@@ -104,7 +104,7 @@
       "id": 5,
       "type": "gauge",
       "title": "Bearing temp rear",
-      "gridPos": {"x": 12, "y": 4, "w": 12, "h": 8},
+      "gridPos": {"x": 12, "y": 0, "w": 12, "h": 8},
       "datasource": {"type": "grafana-postgresql-datasource", "uid": "P40AE60E18F02DE32"},
       "fieldConfig": {
         "defaults": {
@@ -155,7 +155,7 @@
           "datasource": {"type": "grafana-postgresql-datasource", "uid": "P40AE60E18F02DE32"},
           "format": "time_series",
           "rawQuery": true,
-          "rawSql": "SELECT sa.time AS \"time\", CASE s.identifier WHEN '::IO_link_in:rLagertemp_Kreisel_front' THEN 'Front' WHEN '::IO_link_in:rLagertemp_Kreisel_rear' THEN 'Rear' END AS metric, sa.value_num AS value FROM samples sa JOIN signals s ON s.id = sa.signal_id JOIN controllers c ON c.id = s.controller_id WHERE c.name = 'B&R X90' AND c.endpoint LIKE 'opc.tcp://%' AND s.identifier IN ('::IO_link_in:rLagertemp_Kreisel_front', '::IO_link_in:rLagertemp_Kreisel_rear') AND $__timeFilter(sa.time) ORDER BY 1"
+          "rawSql": "SELECT sa.received_at AS \"time\", CASE s.identifier WHEN '::IO_link_in:rLagertemp_Kreisel_front' THEN 'Front' WHEN '::IO_link_in:rLagertemp_Kreisel_rear' THEN 'Rear' END AS metric, sa.value_num AS value FROM samples sa JOIN signals s ON s.id = sa.signal_id JOIN controllers c ON c.id = s.controller_id WHERE c.name = 'B&R X90' AND c.endpoint LIKE 'opc.tcp://%' AND s.identifier IN ('::IO_link_in:rLagertemp_Kreisel_front', '::IO_link_in:rLagertemp_Kreisel_rear') AND $__timeFilter(sa.received_at) ORDER BY 1"
         }
       ]
     },

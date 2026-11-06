@@ -252,6 +252,20 @@ class Store:
         self.seen.add(key)
         return True
 
+    def touch(self) -> None:
+        if self.controller_id is None:
+            return
+        with self.connection.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO recorder_status (controller_id, last_seen, listening)
+                VALUES (%s, now(), true)
+                ON CONFLICT (controller_id) DO UPDATE
+                SET last_seen = now(), listening = true
+                """,
+                (self.controller_id,),
+            )
+
     def mark_offline(self) -> None:
         if self.controller_id is None:
             return
@@ -600,6 +614,7 @@ def main() -> None:
         while True:
             try:
                 count = poll_once(host, store)
+                store.touch()
             except (urllib.error.URLError, TimeoutError, OSError) as exc:
                 print("B&R diagnostics did not answer: %s" % exc)
                 count = 0
