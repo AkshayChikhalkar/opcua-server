@@ -42,7 +42,7 @@ services:
       - ./deploy/grafana/dashboards/lynx:/var/lib/grafana/dashboards/lynx:ro
       - ./deploy/grafana/dashboards/br:/var/lib/grafana/dashboards/br:ro
 
-  # Friendly hostname: SDM at / , Grafana at /dashboard
+  # Friendly hostname → Grafana at /dashboard
   nginx:
     image: nginx:1.27-alpine
     restart: unless-stopped
@@ -52,7 +52,6 @@ services:
       - "${ECU_HTTP_PORT:-80}:80"
     environment:
       ECU_NAME: ${ECU_NAME:?Set ECU_NAME in .env}
-      BR_HOST: ${BR_HOST:-192.168.1.12}
     volumes:
       - ./deploy/nginx/templates:/etc/nginx/templates:ro
 
