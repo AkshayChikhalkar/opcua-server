@@ -31,9 +31,6 @@ services:
       GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?Set GRAFANA_ADMIN_PASSWORD in .env}
       GF_USERS_ALLOW_SIGN_UP: "false"
-      # Use the Host header so LAN IP and ecu-stab-slave both work.
-      GF_SERVER_ROOT_URL: "%(protocol)s://%(domain)s/dashboard/"
-      GF_SERVER_SERVE_FROM_SUB_PATH: "true"
     ports:
       - "${GRAFANA_PORT:-3000}:3000"
     volumes:
@@ -42,19 +39,6 @@ services:
       - ./deploy/grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
       - ./deploy/grafana/dashboards/lynx:/var/lib/grafana/dashboards/lynx:ro
       - ./deploy/grafana/dashboards/br:/var/lib/grafana/dashboards/br:ro
-
-  # Friendly hostname → Grafana at /dashboard
-  nginx:
-    image: nginx:1.27-alpine
-    restart: unless-stopped
-    depends_on:
-      - grafana
-    ports:
-      - "${ECU_HTTP_PORT:-80}:80"
-    environment:
-      ECU_NAME: ${ECU_NAME:?Set ECU_NAME in .env}
-    volumes:
-      - ./deploy/nginx/templates:/etc/nginx/templates:ro
 
 volumes:
   timescale_data:
