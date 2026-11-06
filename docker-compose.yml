@@ -31,7 +31,8 @@ services:
       GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?Set GRAFANA_ADMIN_PASSWORD in .env}
       GF_USERS_ALLOW_SIGN_UP: "false"
-      GF_SERVER_ROOT_URL: http://${ECU_NAME:-ecu-stab-slave}/dashboard/
+      # Use the Host header so LAN IP and ecu-stab-slave both work.
+      GF_SERVER_ROOT_URL: "%(protocol)s://%(domain)s/dashboard/"
       GF_SERVER_SERVE_FROM_SUB_PATH: "true"
     ports:
       - "${GRAFANA_PORT:-3000}:3000"
