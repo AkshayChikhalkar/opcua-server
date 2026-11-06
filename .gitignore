@@ -5,6 +5,7 @@ certs/
 .env
 ecu.local.json
 lynx.local.json
+deploy.local.json
 recordings/
 tetmp
 shelly/devices.json
