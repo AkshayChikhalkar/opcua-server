@@ -18,12 +18,21 @@ services:
       timeout: 5s
       retries: 20
 
+  renderer:
+    image: grafana/grafana-image-renderer:v5.12.11
+    restart: unless-stopped
+    environment:
+      AUTH_TOKEN: ${RENDERER_AUTH_TOKEN:--}
+    shm_size: 1gb
+
   grafana:
     image: grafana/grafana:13.3.0
     restart: unless-stopped
     depends_on:
       timescaledb:
         condition: service_healthy
+      renderer:
+        condition: service_started
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-recorder}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
@@ -31,6 +40,9 @@ services:
       GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?Set GRAFANA_ADMIN_PASSWORD in .env}
       GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_RENDERING_SERVER_URL: http://renderer:8081/render
+      GF_RENDERING_CALLBACK_URL: http://grafana:3000/
+      GF_RENDERING_RENDERER_TOKEN: ${RENDERER_AUTH_TOKEN:--}
     ports:
       - "${GRAFANA_PORT:-3000}:3000"
     volumes:
